@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="8W社区管理后台 - 仅限秘书长使用，用于用户管理、邦国管理、新闻发布等功能。">
+    <meta name="keywords" content="管理后台,用户管理,邦国管理,秘书长">
+    <meta name="author" content="8W社区">
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="msvalidate.01" content="YOUR_BING_SITE_VERIFICATION" />
+    <meta property="bytedance:published_time" content="2026-03-09T00:00:00+08:00" />
+    <meta property="bytedance:lrDate_time" content="2026-03-09T00:00:00+08:00" />
+    <meta property="bytedance:updated_time" content="2026-03-09T00:00:00+08:00" />
+    <title>8W社区管理后台 - 用户管理与新闻发布平台</title>
+    <style>
+        @font-face {
+            font-family: 'ZPix';
+            src: url('/fonts/zpix.woff2') format('woff2');
+            font-weight: normal;
+            font-style: normal;
+            font-display: swap;
+        }
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+    </style>
+    <link rel="stylesheet" href="/css/nes.min.css">
+    <link rel="stylesheet" href="/css/style.css">
+    <!-- Clarity tracking code for https://8w.bgjq.top/ -->
+    <script>
+        (function(c,l,a,r,i,t,y){
+            c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+            t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i+"?ref=bwt";
+            y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+        })(window, document, "clarity", "script", "YOUR_CLARITY_PROJECT_ID");
+    </script>
+    <!-- 自动收录代码 -->
+    <script>
+    (function(){
+    var el = document.createElement("script");
+    el.src = "https://lf1-cdn-tos.bytegoofy.com/goofy/ttzz/push.js?YOUR_BYTEDANCE_PUSH_TOKEN";
+    el.id = "ttzz";
+    var s = document.getElementsByTagName("script")[0];
+    s.parentNode.insertBefore(el, s);
+    })(window)
+    </script>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">
+                    <a href="/">
+                        <img src="/images/logo.webp" alt="社区Logo" class="logo-img" onerror="this.style.display='none'">
+                        <div class="header-text">
+                            <h1>8W社区</h1>
+                            <p class="subtitle">管理后台</p>
+                        </div>
+                    </a>
+                </div>
+                <div class="user-panel" id="userPanel">
+                    <div class="language-switch" id="languageSwitch">
+                        <button class="lang-btn active" data-lang="zh">中文</button>
+                        <button class="lang-btn" data-lang="en">English</button>
+                    </div>
+                    <div id="userNotLoggedIn">
+                        <button class="nes-btn is-primary" id="showLoginBtn">登录</button>
+                    </div>
+                    <div id="userLoggedIn" style="display: none;">
+                        <span class="user-info" id="userInfo">用户</span>
+                        <span class="role-badge nes-badge" id="roleBadge">观察员</span>
+                        <button class="nes-btn" id="logoutBtn">退出</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <nav>
+        <div class="container">
+            <ul class="nav-menu">
+                <li><a href="/" class="nav-link">返回首页</a></li>
+                <li><a href="#users" class="nav-link active admin-section-link" data-section="users">用户管理</a></li>
+                <li><a href="#countries" class="nav-link admin-section-link" data-section="countries">邦国管理</a></li>
+                <li><a href="#news" class="nav-link admin-section-link" data-section="news">新闻管理</a></li>
+                <li><a href="#timeline" class="nav-link admin-section-link" data-section="timeline">时间轴管理</a></li>
+                <li><a href="/api-manager" class="nav-link">API管理</a></li>
+                <li><a href="/api-docs.html" class="nav-link">API文档</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <div class="container">
+            <section id="users" class="section">
+                <h2 class="section-title">用户管理</h2>
+                <div class="nes-container with-title">
+                    <h3 class="title">用户列表</h3>
+                    <div class="user-list" id="userList">
+                        <p class="admin-hint">此功能仅对秘书长可见</p>
+                    </div>
+                </div>
+                <div class="nes-container with-title">
+                    <h3 class="title">添加用户</h3>
+                    <form class="admin-form" id="addUserForm">
+                        <div class="nes-field">
+                            <label for="admin-username">用户名 <span class="required">*</span></label>
+                            <input type="text" id="admin-username" class="nes-input" placeholder="请输入用户名" required>
+                        </div>
+                        <div class="nes-field">
+                            <label for="admin-password">密码 <span class="required">*</span></label>
+                            <input type="password" id="admin-password" class="nes-input" placeholder="请输入密码" required>
+                        </div>
+                        <div class="nes-field">
+                            <label for="admin-game-id">游戏ID <span class="required">*</span></label>
+                            <input type="text" id="admin-game-id" class="nes-input" placeholder="请输入游戏ID" required>
+                        </div>
+                        <div class="nes-field">
+                            <label for="admin-country">所属邦国</label>
+                            <input type="text" id="admin-country" class="nes-input" placeholder="请输入邦国名称">
+                        </div>
+                        <div class="nes-field">
+                            <label for="admin-role">用户角色</label>
+                            <select id="admin-role" class="nes-select">
+                                <option value="observer">观察员</option>
+                                <option value="diplomat">邦国外交官</option>
+                                <option value="peacekeeper">维和部队</option>
+                                <option value="permanent_member">常任理事国</option>
+                                <option value="secretary_general">秘书长</option>
+                            </select>
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="nes-btn is-primary">添加用户</button>
+                            <button type="reset" class="nes-btn">重置</button>
+                        </div>
+                        <div class="form-message" id="addUserFormMessage"></div>
+                    </form>
+                </div>
+            </section>
+            
+            <section id="countries" class="section">
+                <h2 class="section-title">邦国管理</h2>
+                <div class="nes-container with-title">
+                    <h3 class="title">邦国列表</h3>
+
+                    <div class="country-manage-list" id="countryManageList">
+                        <p class="admin-hint">此功能仅对秘书长可见</p>
+                    </div>
+                </div>
+                <div class="nes-container with-title">
+                    <h3 class="title">创建邦国</h3>
+                    <form class="admin-form" id="addCountryForm">
+                        <div class="nes-field">
+                            <label for="country-name">邦国名称 <span class="required">*</span></label>
+                            <input type="text" id="country-name" class="nes-input" placeholder="请输入邦国名称" required>
+                        </div>
+                        <div class="nes-field">
+                            <label for="country-government">政体</label>
+                            <select id="country-government" class="nes-select">
+                                <option value="other">其他</option>
+                                <option value="monarchy">君主制</option>
+                                <option value="democracy">民主制</option>
+                                <option value="guild">公会制</option>
+                            </select>
+                        </div>
+                        <div class="nes-field">
+                            <label for="country-population">人口</label>
+                            <input type="number" id="country-population" class="nes-input" placeholder="请输入人口数量">
+                        </div>
+                        <div class="nes-field">
+                            <label for="country-territory">领地 (Chunks)</label>
+                            <input type="number" id="country-territory" class="nes-input" placeholder="请输入领地Chunks数量">
+                        </div>
+                        <div class="nes-field">
+                            <label for="country-declaration">国家宣言</label>
+                            <textarea id="country-declaration" class="nes-textarea" placeholder="请输入国家宣言"></textarea>
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="nes-btn is-primary">创建邦国</button>
+                            <button type="reset" class="nes-btn">重置</button>
+                        </div>
+                        <div class="form-message" id="addCountryFormMessage"></div>
+                    </form>
+                </div>
+            </section>
+            
+            <section id="news" class="section">
+                <h2 class="section-title">新闻管理</h2>
+                <div class="nes-container with-title">
+                    <h3 class="title">新闻列表</h3>
+                    <div class="news-manage-list" id="newsManageList">
+                        <p class="admin-hint">此功能仅对秘书长可见</p>
+                    </div>
+                </div>
+                <div class="nes-container with-title">
+                    <h3 class="title">发布新闻</h3>
+                    <form class="admin-form" id="addNewsForm">
+                        <div class="nes-field">
+                            <label for="news-title">标题 <span class="required">*</span></label>
+                            <input type="text" id="news-title" class="nes-input" placeholder="请输入新闻标题" required>
+                        </div>
+                        <div class="nes-field">
+                            <label for="news-content">内容 <span class="required">*</span></label>
+                            <textarea id="news-content" class="nes-textarea" placeholder="请输入新闻内容" required></textarea>
+                        </div>
+                        <div class="nes-field">
+                            <label>
+                                <input type="checkbox" id="news-headline" class="nes-checkbox">
+                                <span>设为头条新闻</span>
+                            </label>
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="nes-btn is-primary">发布新闻</button>
+                            <button type="reset" class="nes-btn">重置</button>
+                        </div>
+                        <div class="form-message" id="addNewsFormMessage"></div>
+                    </form>
+                </div>
+            </section>
+            
+            <section id="timeline" class="section">
+                <h2 class="section-title">时间轴管理</h2>
+                <div class="nes-container with-title">
+                    <h3 class="title">历史事件</h3>
+                    <div class="timeline-manage-list" id="timelineManageList">
+                        <p class="admin-hint">此功能仅对秘书长可见</p>
+                    </div>
+                </div>
+                <div class="nes-container with-title">
+                    <h3 class="title">添加事件</h3>
+                    <form class="admin-form" id="addTimelineForm">
+                        <div class="nes-field">
+                            <label for="timeline-date">日期 <span class="required">*</span></label>
+                            <input type="date" id="timeline-date" class="nes-input" required>
+                        </div>
+                        <div class="nes-field">
+                            <label for="timeline-title">标题 <span class="required">*</span></label>
+                            <input type="text" id="timeline-title" class="nes-input" placeholder="请输入事件标题" required>
+                        </div>
+                        <div class="nes-field">
+                            <label for="timeline-desc">描述</label>
+                            <textarea id="timeline-desc" class="nes-textarea" placeholder="请输入事件描述"></textarea>
+                        </div>
+                        <div class="nes-field">
+                            <label for="timeline-type">事件类型</label>
+                            <select id="timeline-type" class="nes-select">
+                                <option value="other">其他</option>
+                                <option value="war">战争</option>
+                                <option value="peace">和平</option>
+                                <option value="construction">建设</option>
+                                <option value="diplomatic">外交</option>
+                            </select>
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="nes-btn is-primary">添加事件</button>
+                            <button type="reset" class="nes-btn">重置</button>
+                        </div>
+                        <div class="form-message" id="addTimelineFormMessage"></div>
+                    </form>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <footer>
+        <div class="container">
+            <!-- 公众号模块 -->
+            <div class="wechat-section">
+                <h4>关注公众号</h4>
+                <div class="wechat-qr-container">
+                    <img src="/images/logo.webp" alt="8W社区公众号二维码" class="wechat-qr-image">
+                    <div class="wechat-text">
+                        扫描二维码关注8W社区公众号<br>
+                        获取最新服务器动态和活动信息
+                    </div>
+                    <div class="wechat-hint">
+                        长按图片保存二维码，使用微信扫描关注
+                    </div>
+                </div>
+            </div>
+            
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h4>8W社区</h4>
+                    <p>维护和平 · 促进发展 · 共建和谐</p>
+                    <div class="social-links">
+                        <a href="#" class="nes-icon is-small twitter"></a>
+                        <a href="#" class="nes-icon is-small github"></a>
+                    </div>
+                    <div style="margin-top: 15px;">
+                        <a href="https://qm.qq.com/q/hELXutcWZy" target="_blank" class="nes-btn is-primary" data-i18n="join_qq_group">
+                            <i class="nes-icon is-small message"></i>
+                            加入QQ群：1085806711
+                        </a>
+                    </div>
+                    <div style="margin-top: 15px;">
+                        <a href="https://pd.qq.com/s/61ds8hzgr" target="_blank" class="nes-btn is-primary">
+                            <i class="nes-icon is-small message"></i>
+                            加入QQ频道
+                        </a>
+                    </div>
+                </div>
+                <div class="footer-section">
+                    <h4>服务器信息</h4>
+                    <p>地址：bgjq.simpfun.cn</p>
+                    <p>在线地图：<a href="http://bgjq.simpfun.cn" target="_blank">bgjq.simpfun.cn</a></p>
+                </div>
+                <div class="footer-section">
+                    <h4>权限组</h4>
+                    <p>秘书长 · 常任理事国 · 邦国外交官</p>
+                    <p>观察员 · 维和部队</p>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2026 8W社区. 保留所有权利.</p>
+                <p style="margin-top: 10px; font-size: 0.8rem; color: #888;">本网站仅用于邦国崛起服务器游戏内用途，不涉及真实政治，严格遵守中华人民共和国法律法规。</p>
+            </div>
+        </div>
+    </footer>
+
+    <button class="back-to-top nes-btn" id="backToTop">
+        <i class="nes-icon is-small balloon"></i>
+        回到顶部
+    </button>
+
+    <div class="modal-overlay" id="loginModal">
+        <div class="modal nes-container with-title">
+            <h3 class="title">登录</h3>
+            <button class="close-modal" id="closeLoginModal">&times;</button>
+            <form id="loginForm">
+                <div class="nes-field">
+                    <label for="login-username">用户名</label>
+                    <input type="text" id="login-username" class="nes-input" required>
+                </div>
+                <div class="nes-field">
+                    <label for="login-password">密码</label>
+                    <input type="password" id="login-password" class="nes-input" required>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="nes-btn is-primary">登录</button>
+                    <button type="button" class="nes-btn cancel-btn">取消</button>
+                </div>
+                <div class="form-message" id="loginFormMessage"></div>
+            </form>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="registerModal">
+        <div class="modal nes-container with-title">
+            <h3 class="title">注册</h3>
+            <button class="close-modal" id="closeRegisterModal">&times;</button>
+            <form id="registerForm">
+                <div class="nes-field">
+                    <label for="register-username">用户名 <span class="required">*</span></label>
+                    <input type="text" id="register-username" class="nes-input" required>
+                </div>
+                <div class="nes-field">
+                    <label for="register-password">密码 <span class="required">*</span></label>
+                    <input type="password" id="register-password" class="nes-input" required>
+                </div>
+                <div class="nes-field">
+                    <label for="register-password-confirm">确认密码 <span class="required">*</span></label>
+                    <input type="password" id="register-password-confirm" class="nes-input" required>
+                </div>
+                <div class="nes-field">
+                    <label for="register-game-id">游戏ID <span class="required">*</span></label>
+                    <input type="text" id="register-game-id" class="nes-input" required>
+                </div>
+                <div class="nes-field">
+                    <label for="register-jhtuid">简幻通UID <span class="required">*</span></label>
+                    <input type="text" id="register-jhtuid" class="nes-input" required>
+                </div>
+                <div class="nes-field">
+                    <label for="register-jht-code">验证码 <span class="required">*</span></label>
+                    <input type="text" id="register-jht-code" class="nes-input" required>
+                </div>
+                <div class="nes-field">
+                    <label for="register-country">所属邦国（可选）</label>
+                    <input type="text" id="register-country" class="nes-input" placeholder="请输入邦国名称">
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="nes-btn is-primary">注册</button>
+                    <button type="button" class="nes-btn cancel-btn">取消</button>
+                </div>
+                <div class="form-message" id="registerFormMessage"></div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 全局加载动画 -->
+    <div id="globalLoading" class="global-loading">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <script src="/js/main.js"></script>
+</body>
+</html>
+
+
+

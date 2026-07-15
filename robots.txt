@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://8w.bgjq.top/sitemap.xml
+
+

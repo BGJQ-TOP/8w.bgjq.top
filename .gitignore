@@ -1,0 +1,36 @@
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 日志文件
+php/logs/
+*.log
+
+# 临时文件
+*.tmp
+*.swp
+*.bak
+
+# IDE
+.idea/
+.vscode/
+*.sublime-*
+
+# 敏感/测试文件（已脱敏，但保留在仓库外以防万一）
+# 如需上传测试文件，请删除以下行
+test_db.php
+simple_test.php
+test.php
+test2.php
+test_php.php
+test_simple.php
+test_db_connection.php
+check_db_structure.sql
+
+# 上传目录
+uploads/
+
+# 环境配置
+.env
+.env.local

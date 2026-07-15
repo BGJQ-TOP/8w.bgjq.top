@@ -1,0 +1,123 @@
+server {
+    root /var/www/8w.bgjq.top/html;
+
+    index index.php index.html;
+
+    server_name 8w.bgjq.top;
+ 
+    # 主页面 - 优先处理静态文件，不存在才通过index.php处理
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+    
+    # 直接处理HTML文件
+    location ~* \.html$ {
+        try_files $uri =404;
+        add_header Content-Type "text/html; charset=utf-8";
+    }
+    
+    # 友好URL规则
+    location /world-news {
+        try_files $uri $uri/ /world-news.php?$query_string;
+    }
+    
+    location /parliament {
+        try_files $uri $uri/ /parliament.php?$query_string;
+    }
+    
+    location /assembly {
+        try_files $uri $uri/ /assembly.php?$query_string;
+    }
+    
+    location /court {
+        try_files $uri $uri/ /court.php?$query_string;
+    }
+    
+    location /services {
+        try_files $uri $uri/ /services.php?$query_string;
+    }
+    
+    location = /complaint {
+        return 301 https://suggest.bgjq.top/;
+    }
+    
+    location = /sitemap {
+        try_files /sitemap.xml =404;
+        add_header Content-Type "application/xml; charset=utf-8";
+    }
+    
+    location /admin {
+        try_files $uri $uri/ /admin.html;
+    }
+    
+    # API 路由 - 重写规则
+    location /api/v1/public/ {
+        rewrite ^/api/v1/public/([^/]+)/(\d+)$ /api/v1/public/$1.php?id=$2 last;
+        rewrite ^/api/v1/public/([^/]+)$ /api/v1/public/$1.php last;
+    }
+
+    # API 管理页面
+    location = /api-manager {
+        try_files $uri $uri/ /api-manager.php?$query_string;
+    }
+    
+    # 重定向旧的 HTML 文件到新的美化 URL
+    location = /services.html {
+        return 301 /services;
+    }
+    
+    # 重定向 trade-publish.html 到 trade.bgjq.top
+    location = /trade-publish.html {
+        return 301 https://trade.bgjq.top/;
+    }
+    
+    # 重定向 trade-publish.php 到 trade.bgjq.top
+    location = /trade-publish.php {
+        return 301 https://trade.bgjq.top/;
+    }
+    
+    # 处理 favicon.ico
+    location = /favicon.ico {
+        alias /var/www/8w.bgjq.top/html/images/favicon.ico;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+    
+    # PHP处理
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.5-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+    }
+    
+    # 静态文件缓存
+    location ~* \.(jpg|jpeg|png|gif|ico|css|js|woff2|webp)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+    
+    # 安全头
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    listen 443 ssl http2 ; # managed by Certbot
+    ssl_certificate /etc/ssl/cloudflare/bgjq.top.pem;
+    ssl_certificate_key /etc/ssl/cloudflare/bgjq.top.key;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+}
+
+
+server {
+    if ($host = 8w.bgjq.top) {
+        return 301 https://$host$request_uri;
+    }
+    listen 80 ;
+
+    server_name 8w.bgjq.top;
+    return 404; # managed by Certbot
+
+
+}
