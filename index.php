@@ -27,7 +27,7 @@ try {
     <meta property="og:description" content="8W社区官方网站 - 专业的Minecraft Java版服务器平台，提供我的世界服务器、MC国战服、邦国崛起游戏等服务。维护和平，促进发展，共建和谐的我的世界国战服社区。">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://8w.bgjq.top">
-    <meta property="og:image" content="https://8w.bgjq.top/images/Lyizai.webp">
+    <meta property="og:image" content="https://8w.bgjq.top/images/logo.webp">
     <meta property="bytedance:published_time" content="2026-03-10T00:00:00+08:00" />
     <meta property="bytedance:lrDate_time" content="2026-03-10T00:00:00+08:00" />
     <meta property="bytedance:updated_time" content="2026-03-10T00:00:00+08:00" />
@@ -42,7 +42,7 @@ try {
       "name": "8W社区",
       "alternateName": "BangGuo United Nations",
       "url": "https://8w.bgjq.top",
-      "logo": "https://8w.bgjq.top/images/Lyizai.webp",
+      "logo": "https://8w.bgjq.top/images/logo.webp",
       "description": "8W社区官方网站 - 专业的Minecraft Java版服务器平台，提供我的世界服务器、MC国战服、邦国崛起游戏等服务。维护和平，促进发展，共建和谐的我的世界国战服社区。",
       "publisher": {
         "@type": "Organization",
@@ -50,7 +50,7 @@ try {
         "url": "https://8w.bgjq.top",
         "logo": {
           "@type": "ImageObject",
-          "url": "https://8w.bgjq.top/images/Lyizai.webp"
+          "url": "https://8w.bgjq.top/images/logo.webp"
         }
       },
       "potentialAction": {
@@ -75,7 +75,7 @@ try {
       "name": "8W社区",
       "alternateName": "BangGuo United Nations",
       "url": "https://8w.bgjq.top",
-      "logo": "https://8w.bgjq.top/images/Lyizai.webp",
+      "logo": "https://8w.bgjq.top/images/logo.webp",
       "description": "邦国崛起服务器的社区组织，维护和平、促进发展、共建和谐。提供我的世界Java版服务器、MC国战服、邦国崛起游戏等服务。",
       "sameAs": [
         "https://qm.qq.com/q/hELXutcWZy"
@@ -149,7 +149,7 @@ try {
         <div class="container">
             <div class="header-content">
                 <div class="logo">
-                    <img src="/images/Lyizai.webp" alt="社区Logo" class="logo-img" onerror="this.style.display='none'">
+                    <img src="/images/logo.webp" alt="社区Logo" class="logo-img" onerror="this.style.display='none'">
                     <div class="header-text">
                         <h1 data-i18n="website_name">8W 社区</h1>
                         <p class="subtitle" data-i18n="website_subtitle">8w Community</p>

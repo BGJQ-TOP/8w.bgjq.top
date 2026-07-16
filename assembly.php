@@ -68,7 +68,7 @@ try {
         <div class="container">
             <div class="header-content">
                 <div class="logo">
-                    <img src="/images/Lyizai.webp" alt="社区Logo" class="logo-img" onerror="this.style.display='none'">
+                    <img src="/images/logo.webp" alt="社区Logo" class="logo-img" onerror="this.style.display='none'">
                     <div class="header-text">
                         <h1>8W社区</h1>
                         <p class="subtitle">8w Community</p>
