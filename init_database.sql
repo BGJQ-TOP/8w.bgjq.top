@@ -15,7 +15,7 @@ CREATE DATABASE IF NOT EXISTS bgjq
 -- 第二步：创建用户并授权
 -- ============================================================
 -- 如果用户已存在则跳过（MariaDB 10.3+ 支持 IF NOT EXISTS）
-CREATE USER IF NOT EXISTS 'bgjq'@'localhost' IDENTIFIED BY 'YOUR_DB_PASSWORD';
+CREATE USER IF NOT EXISTS 'bgjq'@'localhost' IDENTIFIED BY 'ILoveMC1314!!!';
 
 -- 授予 bgjq 数据库全部权限
 GRANT ALL PRIVILEGES ON bgjq.* TO 'bgjq'@'localhost';
