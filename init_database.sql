@@ -15,11 +15,10 @@ CREATE DATABASE IF NOT EXISTS bgjq
 -- 第二步：创建用户并授权
 -- ============================================================
 -- 如果用户已存在则跳过（MariaDB 10.3+ 支持 IF NOT EXISTS）
-CREATE USER IF NOT EXISTS 'bgjq'@'localhost' IDENTIFIED BY 'ILoveMC1314!!!';
+CREATE USER IF NOT EXISTS 'bgjq'@'localhost' IDENTIFIED BY 'YOUR_DB_PASSWORD';
 
 -- 授予 bgjq 数据库全部权限
 GRANT ALL PRIVILEGES ON bgjq.* TO 'bgjq'@'localhost';
-GRANT ALL PRIVILEGES ON bgjq.* TO 'bgjqwww'@'localhost';
 FLUSH PRIVILEGES;
 
 -- ============================================================
@@ -285,15 +284,9 @@ CREATE TABLE IF NOT EXISTS `api_logs` (
 -- 第五步：插入初始数据
 -- ============================================================
 
--- 默认管理员用户（密码：password，bcrypt 哈希）
+-- 默认管理员用户（用户名：LouieMAIN，密码：Lyizai211）
 INSERT IGNORE INTO `users` (`username`, `password`, `game_id`, `role`) VALUES
-('admin', '$2y$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', 'Admin', 'secretary_general');
-
--- 示例邦国
-INSERT IGNORE INTO `countries` (`name`, `declaration`, `government_type`) VALUES
-('中华人民共和国', '中华人民共和国是工人阶级领导的、以工农联盟为基础的人民民主专政的社会主义国家。', 'democracy'),
-('美利坚合众国', '美利坚合众国是一个由五十个州和一个联邦直辖特区组成的宪政联邦共和制国家。', 'democracy'),
-('俄罗斯联邦', '俄罗斯联邦是由22个自治共和国、46个州、9个边疆区、4个自治区、1个自治州、3个联邦直辖市组成的联邦共和立宪制国家。', 'democracy');
+('LouieMAIN', '$2y$10$CBiU1EOLZMOxjJAryMUW9.OShfztcH4c94HT9Q1WKUw1/I0JIRGpm', 'LouieMAIN', 'secretary_general');
 
 -- 默认公共服务
 INSERT IGNORE INTO `services` (`name`, `url`) VALUES
@@ -301,62 +294,11 @@ INSERT IGNORE INTO `services` (`name`, `url`) VALUES
 ('官方QQ群', 'https://qm.qq.com/q/hELXutcWZy'),
 ('QQ频道', 'https://pd.qq.com/s/61ds8hzgr');
 
--- 示例新闻
-INSERT IGNORE INTO `news` (`title`, `content`, `author_id`, `is_headline`) VALUES
-('服务器开服公告', '邦国崛起服务器正式开服，欢迎各位玩家加入！', 1, TRUE),
-('社区成立', '8W社区正式成立，致力于维护服务器和平与发展。', 1, TRUE);
-
--- 示例时间轴事件
-INSERT IGNORE INTO `timeline` (`date`, `title`, `description`, `event_type`) VALUES
-(CURDATE(), '服务器开服', '邦国崛起服务器正式开服', 'construction'),
-(CURDATE(), '社区成立', '8W社区正式成立', 'diplomatic');
-
--- 示例公约
-INSERT IGNORE INTO `conventions` (`title`, `content`) VALUES
-('和平共处五项原则', '互相尊重主权和领土完整、互不侵犯、互不干涉内政、平等互利、和平共处。'),
-('核不扩散条约', '禁止发展、生产、储存核武器，促进核裁军。');
-
--- 示例提案
-INSERT IGNORE INTO `proposals` (`title`, `description`, `type`, `proposer_id`, `status`) VALUES
-('建立国际贸易组织', '建立一个专门的国际贸易组织，促进邦国之间的贸易往来。', 'trade', 1, 'passed'),
-('设立维和部队', '设立社区维和部队，维护服务器和平与稳定。', 'defense', 1, 'passed');
-
--- 示例投票
-INSERT IGNORE INTO `votes` (`proposal_id`, `user_id`, `country_id`, `vote`, `has_veto`) VALUES
-(1, 1, 1, 'for', TRUE),
-(2, 1, 1, 'for', TRUE);
-
--- 示例案件
-INSERT IGNORE INTO `cases` (`case_number`, `title`, `description`, `plaintiff_id`, `status`) VALUES
-('案字第001号', '领土争端案', '两个邦国之间的领土争端', 1, 'closed'),
-('案字第002号', '贸易纠纷案', '贸易协议违约纠纷', 1, 'closed');
-
--- 示例仲裁记录
-INSERT IGNORE INTO `arbitration_archive` (`case_id`, `case_number`, `title`, `judgment`) VALUES
-(1, '案字第001号', '领土争端案', '根据相关公约，争议领土归属于原告邦国。'),
-(2, '案字第002号', '贸易纠纷案', '被告邦国需向原告邦国赔偿损失。');
-
--- 示例案件证据
-INSERT IGNORE INTO `case_evidence` (`case_id`, `uploaded_by_user_id`) VALUES
-(1, 1),
-(2, 1);
-
--- 示例外交关系
-INSERT IGNORE INTO `diplomatic_relations` (`country1_id`, `country2_id`, `relation`, `set_by_user_id`) VALUES
-(1, 2, 'friendly', 1),
-(1, 3, 'neutral', 1),
-(2, 3, 'friendly', 1);
-
--- 示例贸易信息
-INSERT IGNORE INTO `trades` (`type`, `item_name`, `quantity`, `exchange_method`, `country_id`, `posted_by_user_id`) VALUES
-('sell', '钻石', '10个', '以物易物或货币', 1, 1),
-('buy', '铁锭', '50个', '货币交易', 2, 1);
-
 COMMIT;
 
 -- ============================================================
 -- 初始化完成
 -- ============================================================
--- 默认管理员账号：admin / password
+-- 默认管理员账号：LouieMAIN / Lyizai211
 -- 请登录后立即修改密码！
 -- ============================================================
