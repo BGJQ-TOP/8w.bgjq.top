@@ -8,7 +8,7 @@
    · 主色调： 采用社区标志性的天蓝色 (#4A7DB5) 搭配纯洁白 (#FFFFFF) 和象征着土地的棕色系。
    · 字体： 标题使用具有权威感的衬线字体（如思源宋体），正文使用清晰的无衬线字体（如思源黑体）。
 2. 标志（Logo）：
-   · /images/logo.webp和/images/favicon.ico
+   · /images/Lyizai.webp和/images/favicon.ico
 
 三、 核心功能板块设计
 网站主要分为两大功能区：信息公示区 与 外交办公区。

@@ -26,7 +26,7 @@
 │   ├── zpix.woff2
 │   └── consola.woff2
 └── images/
-    └── (logo.webp)
+    └── (Lyizai.webp)
 ```
 
 ## 部署步骤

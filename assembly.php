@@ -68,7 +68,7 @@ try {
         <div class="container">
             <div class="header-content">
                 <div class="logo">
-                    <img src="/images/logo.webp" alt="社区Logo" class="logo-img" onerror="this.style.display='none'">
+                    <img src="/images/Lyizai.webp" alt="社区Logo" class="logo-img" onerror="this.style.display='none'">
                     <div class="header-text">
                         <h1>8W社区</h1>
                         <p class="subtitle">8w Community</p>
@@ -197,7 +197,7 @@ try {
             <div class="wechat-section">
                 <h4>关注公众号</h4>
                 <div class="wechat-qr-container">
-                    <img src="/images/logo.webp" alt="8W社区公众号二维码" class="wechat-qr-image">
+                    <img src="/images/Lyizai.webp" alt="8W社区公众号二维码" class="wechat-qr-image">
                     <div class="wechat-text">
                         扫描二维码关注8W社区公众号<br>
                         获取最新服务器动态和活动信息

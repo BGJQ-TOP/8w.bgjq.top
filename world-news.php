@@ -26,7 +26,7 @@ try {
     <meta property="og:description" content="8W社区 - 世界动态，了解最新的服务器新闻和事件">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://8w.bgjq.top/world-news">
-    <meta property="og:image" content="https://8w.bgjq.top/images/logo.webp">
+    <meta property="og:image" content="https://8w.bgjq.top/images/Lyizai.webp">
     <meta property="bytedance:published_time" content="2026-03-10T00:00:00+08:00" />
     <meta property="bytedance:lrDate_time" content="2026-03-10T00:00:00+08:00" />
     <meta property="bytedance:updated_time" content="2026-03-10T00:00:00+08:00" />
@@ -119,7 +119,7 @@ try {
         <div class="container">
             <div class="header-content">
                 <div class="logo">
-                    <img src="/images/logo.webp" alt="社区Logo" class="logo-img" onerror="this.style.display='none'">
+                    <img src="/images/Lyizai.webp" alt="社区Logo" class="logo-img" onerror="this.style.display='none'">
                     <div class="header-text">
                         <h1 data-i18n="website_name">8W社区</h1>
                         <p class="subtitle" data-i18n="website_subtitle">8w Community</p>
@@ -251,7 +251,7 @@ try {
             <div class="wechat-section">
                 <h4>关注公众号</h4>
                 <div class="wechat-qr-container">
-                    <img src="/images/logo.webp" alt="8W社区公众号二维码" class="wechat-qr-image">
+                    <img src="/images/Lyizai.webp" alt="8W社区公众号二维码" class="wechat-qr-image">
                     <div class="wechat-text">
                         扫描二维码关注8W社区公众号<br>
                         获取最新服务器动态和活动信息
