@@ -19,7 +19,7 @@ function requireAdmin() {
         jsonError('请先登录', 401);
     }
     
-    if ($_SESSION['user']['username'] !== 'YOUR_ADMIN_USERNAME') {
+    if ($_SESSION['user']['username'] !== env('ADMIN_USERNAME', 'YOUR_ADMIN_USERNAME')) {
         jsonError('只有管理员才能访问此功能', 403);
     }
 }

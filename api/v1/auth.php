@@ -158,7 +158,7 @@ function handleRegister($db, $auth) {
  * @return array ['ok' => bool, 'faction' => string, 'message' => string]
  */
 function verifyPlayerFaction($playerName, $countryName) {
-    $apiUrl = "http://YOUR_API_HOST:PORT/bgjq/data/player/" . urlencode($playerName);
+    $apiUrl = env('INTERNAL_API_HOST', 'http://YOUR_API_HOST:PORT') . "/bgjq/data/player/" . urlencode($playerName);
     
     appLog('PLAYER_VERIFY', '开始查询玩家信息', ['player' => $playerName, 'url' => $apiUrl]);
     

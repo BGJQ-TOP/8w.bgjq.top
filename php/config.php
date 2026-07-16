@@ -1,13 +1,52 @@
 <?php
 /**
  * 数据库配置文件
+ * 敏感配置请存放在项目根目录的 .env 文件中
+ * .env 已被 .gitignore 排除，不会提交到公开仓库
  */
 
-// 数据库配置
-define('DB_HOST', 'localhost');
-define('DB_NAME', 'bgjq');
-define('DB_USER', 'YOUR_DB_USER');
-define('DB_PASS', 'YOUR_DB_PASSWORD');
+// ========== .env 文件加载器 ==========
+function loadEnv($filePath) {
+    if (!file_exists($filePath)) {
+        return;
+    }
+    $lines = file($filePath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if ($line === '' || $line[0] === '#') {
+            continue;
+        }
+        $pos = strpos($line, '=');
+        if ($pos === false) {
+            continue;
+        }
+        $key = trim(substr($line, 0, $pos));
+        $value = trim(substr($line, $pos + 1));
+        // 去除引号包裹
+        if ((substr($value, 0, 1) === '"' && substr($value, -1) === '"') ||
+            (substr($value, 0, 1) === "'" && substr($value, -1) === "'")) {
+            $value = substr($value, 1, -1);
+        }
+        $_ENV[$key] = $value;
+        putenv("{$key}={$value}");
+    }
+}
+
+// 获取环境变量，优先从 .env 读取，否则使用默认值
+function env($key, $default = '') {
+    $value = $_ENV[$key] ?? getenv($key);
+    return $value !== false && $value !== '' ? $value : $default;
+}
+
+// 加载项目根目录的 .env 文件
+$envFile = dirname(__DIR__) . '/.env';
+loadEnv($envFile);
+
+// ========== 数据库配置 ==========
+define('DB_HOST', env('DB_HOST', 'localhost'));
+define('DB_NAME', env('DB_NAME', 'bgjq'));
+define('DB_USER', env('DB_USER', 'YOUR_DB_USER'));
+define('DB_PASS', env('DB_PASS', 'YOUR_DB_PASSWORD'));
 define('DB_CHARSET', 'utf8mb4');
 
 // 网站配置
@@ -18,7 +57,7 @@ define('SITE_URL', 'https://8w.bgjq.top');
 // 验证接口地址
 define('SIMPPASS_API_URL', 'https://pass.xiaoli.top/api/simppass/auth');
 // 后台提供的 API 调用令牌
-define('SIMPPASS_ACCESS_TOKEN', 'YOUR_SIMPPASS_ACCESS_TOKEN');
+define('SIMPPASS_ACCESS_TOKEN', env('SIMPPASS_ACCESS_TOKEN', 'YOUR_SIMPPASS_ACCESS_TOKEN'));
 
 // 会话配置
 define('SESSION_LIFETIME', 86400); // 24小时

@@ -12,7 +12,7 @@ function checkAdmin() {
         exit;
     }
     
-    if ($_SESSION['user']['username'] !== 'YOUR_ADMIN_USERNAME') {
+    if ($_SESSION['user']['username'] !== env('ADMIN_USERNAME', 'YOUR_ADMIN_USERNAME')) {
         die('只有管理员才能访问此功能');
     }
     

@@ -22,7 +22,7 @@ try {
     <meta name="keywords" content="公共服务,服务列表,邦国崛起,社区,我的世界,MC,我的世界java版,我的世界服务器,我的世界国战服,国战服,邦国,国产服,国内java服务器,MC国战服,邦国崛起游戏">
     <meta name="author" content="8W社区">
     <meta name="robots" content="index, follow">
-    <meta name="msvalidate.01" content="YOUR_BING_SITE_VERIFICATION" />
+    <meta name="msvalidate.01" content="<?php echo env('BING_SITE_VERIFICATION', 'C33A4C83526E03ED6F8FAAEA1B02E3EF'); ?>" />
     <meta property="og:title" content="公共服务 - 8W社区官方网站">
     <meta property="og:description" content="8W社区公共服务页面 - 汇集Minecraft Java版服务器各类实用工具和资源链接，包括在线地图、官方QQ群、QQ频道等服务，为玩家提供便捷的一站式服务导航。">
     <meta property="og:type" content="website">

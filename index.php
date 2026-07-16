@@ -22,7 +22,7 @@ try {
     <meta name="keywords" content="邦国崛起,社区,Minecraft,服务器,我的世界,MC,我的世界java版,我的世界服务器,我的世界国战服,国战服,邦国,国产服,国内java服务器,我的世界服务器ip地址,我的世界服务器推荐,我的世界服务器搭建,MC国战服JAVA,邦国崛起游戏">
     <meta name="author" content="8W社区">
     <meta name="robots" content="index, follow">
-    <meta name="msvalidate.01" content="YOUR_BING_SITE_VERIFICATION" />
+    <meta name="msvalidate.01" content="<?php echo env('BING_SITE_VERIFICATION', 'C33A4C83526E03ED6F8FAAEA1B02E3EF'); ?>" />
     <meta property="og:title" content="8W社区官方网站 - 邦国崛起玩家社区">
     <meta property="og:description" content="8W社区官方网站 - 专业的Minecraft Java版服务器平台，提供我的世界服务器、MC国战服、邦国崛起游戏等服务。维护和平，促进发展，共建和谐的我的世界国战服社区。">
     <meta property="og:type" content="website">

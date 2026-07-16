@@ -101,13 +101,13 @@ try {
             c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
             t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i+"?ref=bwt";
             y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
-        })(window, document, "clarity", "script", "YOUR_CLARITY_PROJECT_ID");
+        })(window, document, "clarity", "script", "<?php echo env('CLARITY_PROJECT_ID', 'vnqsaapkjs'); ?>");
     </script>
     <!-- 自动收录代码 -->
     <script>
     (function(){
     var el = document.createElement("script");
-    el.src = "https://lf1-cdn-tos.bytegoofy.com/goofy/ttzz/push.js?YOUR_BYTEDANCE_PUSH_TOKEN";
+    el.src = "https://lf1-cdn-tos.bytegoofy.com/goofy/ttzz/push.js?<?php echo env('BYTEDANCE_PUSH_TOKEN', 'd654cdee31e00a2b02619e7f44d2772b0fbac7661d05e8193da5880b90f3b4d119d1c501ebd3301f5e2290626f5b53d078c8250527fa0dfd9783a026ff3cf719'); ?>";
     el.id = "ttzz";
     var s = document.getElementsByTagName("script")[0];
     s.parentNode.insertBefore(el, s);
