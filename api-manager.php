@@ -3,20 +3,25 @@ require_once __DIR__ . '/php/config.php';
 require_once __DIR__ . '/php/classes/Auth.php';
 
 function checkAdmin() {
-    if (session_status() == PHP_SESSION_NONE) {
-        session_start();
-    }
-    
-    if (!isset($_SESSION['user'])) {
-        header('Location: /admin.html');
+    // 身份真源是 8W通行证；Auth 会把通行证账号镜像进 $_SESSION['user'] 供旧页面读取
+    $auth = new Auth();
+
+    if (!$auth->isLoggedIn()) {
+        header('Location: /passport/?return=' . rawurlencode('/api-manager'));
         exit;
     }
-    
-    if ($_SESSION['user']['username'] !== env('ADMIN_USERNAME', 'YOUR_ADMIN_USERNAME')) {
+
+    $user = $auth->getCurrentUser();
+    $adminUsername = env('ADMIN_USERNAME', '');
+
+    $isAdmin = ($adminUsername !== '' && $user['username'] === $adminUsername)
+        || $auth->hasRole('secretary_general');
+
+    if (!$isAdmin) {
         die('只有管理员才能访问此功能');
     }
-    
-    return $_SESSION['user'];
+
+    return $user;
 }
 
 function getApiKeys($db) {

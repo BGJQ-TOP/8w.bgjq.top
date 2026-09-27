@@ -1,254 +1,139 @@
-# 8W社区 - 数据库结构说明
+# 8W社区 · 数据库结构说明
 
-> 根据代码中的 SQL 推断，项目中仅存在 `php/create_services_table.sql`，其余表结构需按此文档创建或对照。
-
----
-
-## 1. users（用户）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT, PK, AUTO_INCREMENT | 主键 |
-| username | VARCHAR | 用户名，唯一 |
-| password | VARCHAR | 密码（bcrypt 哈希） |
-| game_id | VARCHAR | 游戏内 ID |
-| country_id | INT, FK → countries.id, NULL | 所属邦国 |
-| role | VARCHAR | 角色：observer, diplomat, peacekeeper, permanent_member, secretary_general |
-| jhtuid | TEXT, NULL | 外部系统用户 ID（如聚合平台 UID），可选 |
-| level | TEXT, NULL | 等级/段位等扩展信息，文本存储，格式自定义 |
-| created_at | DATETIME | 创建时间 |
+> **唯一真源是 `database/8w_passport.sql`**，本文档只是索引与设计意图说明。
+> 结构有出入时以 SQL 文件为准。
+>
+> 新库名：`bgjq8w`（旧的 `bgjq` 已废弃，清理方式见 `docs/MIGRATION.md`）
 
 ---
 
-## 2. countries（邦国）
+## 设计原则
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT, PK, AUTO_INCREMENT | 主键 |
-| name | VARCHAR | 邦国名称，唯一 |
-| declaration | TEXT, NULL | 国家宣言 |
-| government_type | VARCHAR | 政体：monarchy, democracy, guild, other |
-| population | INT, NULL | 人口（可选） |
-| territory_chunks | INT, NULL | 领地块数（Chunk） |
-| flag_url | VARCHAR, NULL | 国旗/图标 URL |
-| is_active | BOOLEAN | 是否启用（停用邦国用） |
-| joined_at | DATETIME | 加入时间 |
+1. **身份只有一个真源**：`passport_accounts`。社区各业务表一律引用它的 `id`。
+2. **权威数据只做缓存**：游戏内玩家与邦国信息由第三方权威服务提供，
+   本地表存的是缓存，随时可被覆盖。
+   - 权威主键：**玩家名**（`players.player_name`）、**邦国ID**（`countries.id`）
+   - 除这两个键以外的字段都是缓存，不得当作真值使用
+3. **country_id 上刻意不加外键**：缓存可能先于权威数据落库，
+   加外键会导致合法的玩家记录写不进来。
+4. **令牌只存哈希**：会话令牌、OAuth 令牌、验证码一律存 SHA-256。
 
 ---
 
-## 3. sessions（会话 / 登录态）
+## 一、8W通行证 · 身份域
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT, PK, AUTO_INCREMENT | 主键 |
-| user_id | INT, FK → users.id | 用户 ID |
-| token | VARCHAR | 会话 token |
-| expires_at | DATETIME | 过期时间 |
-| ip_address | VARCHAR | 登录 IP |
-| user_agent | VARCHAR | 浏览器 UA |
+| 表 | 说明 |
+|---|---|
+| `passport_accounts` | 通行证账号。第三方拿到的 `sub` 就是这里的 `id` |
+| `passport_sessions` | 登录会话，只存令牌哈希 |
+| `passport_email_codes` | 邮箱验证码，只存验证码哈希，含失败次数与消费标记 |
 
----
+### `passport_accounts` 关键字段
 
-## 4. online_players（在线玩家缓存）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT, PK, AUTO_INCREMENT | 主键 |
-| user_id | INT, FK → users.id | 用户 ID |
-| game_id | VARCHAR | 游戏 ID（与 MC 在线列表匹配） |
-| country_id | INT, FK, NULL | 邦国 ID |
-| last_seen | DATETIME | 最后在线时间（登录时更新） |
+| 字段 | 说明 |
+|---|---|
+| `id` | 通行证UID（对外唯一标识） |
+| `username` / `email` / `password_hash` | 登录凭据 |
+| `email_verified_at` | 邮箱验证通过时间 |
+| `simpass_uid` / `simpass_level` / `simpass_verified_at` | 简幻通身份 |
+| `player_name` | **游戏内玩家名（权威主键）** |
+| `player_id` | 玩家ID（权威缓存） |
+| `country_id` | 玩家所属邦国ID（权威缓存） |
+| `role` / `status` | 站内角色 / 账号状态 |
 
 ---
 
-## 5. news（新闻）
+## 二、第三方接入 / API 分发（OAuth 2.0）
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT, PK, AUTO_INCREMENT | 主键 |
-| title | VARCHAR | 标题 |
-| content | TEXT | 正文 |
-| author_id | INT, FK → users.id | 发布者 ID |
-| is_headline | BOOLEAN | 是否头条 |
-| published_at | DATETIME | 发布时间 |
+| 表 | 说明 |
+|---|---|
+| `passport_oauth_clients` | 第三方应用：client_id、密钥哈希、回调白名单、允许的 scope、限流 |
+| `passport_oauth_codes` | 授权码（一次性、短有效期，含 PKCE challenge） |
+| `passport_oauth_tokens` | 访问令牌 / 刷新令牌（均只存哈希） |
+| `passport_api_logs` | 第三方 API 调用日志，限流与审计依据 |
 
----
-
-## 6. timeline（历史时间轴）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT, PK, AUTO_INCREMENT | 主键 |
-| date | DATE | 事件日期 |
-| title | VARCHAR | 标题 |
-| description | TEXT, NULL | 描述 |
-| event_type | VARCHAR | 类型：war, peace, construction, diplomatic, other |
-| created_at | DATETIME | 创建时间（可选） |
+协议支持：`authorization_code`（含 PKCE）、`refresh_token`（轮换式）、`client_credentials`（仅 `directory` scope）。
 
 ---
 
-## 7. proposals（提案）
+## 三、权威数据缓存域
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT, PK, AUTO_INCREMENT | 主键 |
-| title | VARCHAR | 标题 |
-| description | TEXT | 描述 |
-| type | VARCHAR | 类型：territory, defense, trade, embargo, event, other |
-| proposer_id | INT, FK → users.id | 提案人 ID |
-| country_id | INT, FK → countries.id, NULL | 提案邦国 |
-| status | VARCHAR | 状态：draft, voting, passed, rejected |
-| voting_start | DATETIME, NULL | 投票开始时间 |
-| voting_end | DATETIME, NULL | 投票结束时间 |
-| created_at | DATETIME | 创建时间 |
+### `countries` —— 邦国
 
----
+| 字段 | 来源 | 说明 |
+|---|---|---|
+| `id` | **权威** | 邦国ID |
+| `name` | 缓存 | 邦国名称 |
+| `declaration` | 缓存 | 邦国宣言 |
+| `territory_chunks` | 缓存 | 邦国领土大小（Chunk 数） |
+| `population` | 缓存 | 邦国人口（玩家列表长度） |
+| `government_type` / `flag_url` / `is_active` | 站内 | 社区补充字段，同步权威数据时**不会**被覆盖 |
+| `synced_at` | — | 最近同步时间，决定缓存是否过期 |
 
-## 8. votes（投票记录）
+### `players` —— 游戏内玩家
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT, PK, AUTO_INCREMENT | 主键 |
-| proposal_id | INT, FK → proposals.id | 提案 ID |
-| user_id | INT, FK → users.id | 投票用户 |
-| country_id | INT, FK, NULL | 用户所属邦国 |
-| vote | VARCHAR | 投票：for, against, abstain |
-| has_veto | BOOLEAN | 是否常任理事国一票否决 |
-
----
-
-## 9. conventions（世界公约）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT, PK, AUTO_INCREMENT | 主键 |
-| title | VARCHAR | 公约标题 |
-| content | TEXT | 公约内容 |
-| proposal_id | INT, FK → proposals.id, NULL | 来源提案 ID |
-| enacted_by_user_id | INT, FK → users.id, NULL | 生效操作人 |
-| enacted_at | DATETIME | 生效时间 |
-
----
-
-## 10. cases（国际法庭案件）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT, PK, AUTO_INCREMENT | 主键 |
-| case_number | VARCHAR | 案号（如 案字第001号） |
-| title | VARCHAR | 案件标题 |
-| description | TEXT | 描述 |
-| plaintiff_id | INT, FK → users.id | 投诉人 ID |
-| defendant_country_id | INT, FK → countries.id, NULL | 被诉邦国 |
-| status | VARCHAR | 状态：filed, hearing, judged, closed |
-| judgment | TEXT, NULL | 判决内容 |
-| filed_at | DATETIME | 立案时间 |
-| judged_at | DATETIME, NULL | 判决时间 |
-
----
-
-## 11. case_evidence（案件证据）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT, PK, AUTO_INCREMENT | 主键 |
-| case_id | INT, FK → cases.id | 案件 ID |
-| uploaded_by_user_id | INT, FK → users.id, NULL | 上传人 |
-| uploaded_at | DATETIME | 上传时间 |
-| （可能还有 file_url / path 等字段，代码中未显式列出） |  |  |
-
----
-
-## 12. arbitration_archive（仲裁结果库）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT, PK, AUTO_INCREMENT | 主键 |
-| case_id | INT, FK → cases.id | 原案件 ID |
-| case_number | VARCHAR | 案号 |
-| title | VARCHAR | 标题 |
-| judgment | TEXT | 判决内容 |
-
----
-
-## 13. diplomatic_relations（外交关系）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT, PK, AUTO_INCREMENT | 主键 |
-| country1_id | INT, FK → countries.id | 邦国 1 |
-| country2_id | INT, FK → countries.id | 邦国 2 |
-| relation | VARCHAR | 关系：friendly, hostile, neutral, ceasefire |
-| set_by_user_id | INT, FK → users.id | 设置人 |
-
----
-
-## 14. trades（贸易信息）
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT, PK, AUTO_INCREMENT | 主键 |
-| type | VARCHAR | buy / sell |
-| item_name | VARCHAR | 物品名称 |
-| quantity | VARCHAR, NULL | 数量描述 |
-| exchange_method | VARCHAR, NULL | 交换方式 |
-| country_id | INT, FK, NULL | 发布邦国 |
-| posted_by_user_id | INT, FK → users.id | 发布人 |
-| status | VARCHAR | active, completed, cancelled |
-| created_at | DATETIME | 创建时间 |
-
----
-
-## 15. services（公共服务）
-
-已有建表脚本：`php/create_services_table.sql`
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | INT, PK, AUTO_INCREMENT | 主键 |
-| name | VARCHAR(255) | 服务名称 |
-| url | VARCHAR(255) | 服务网址 |
-| created_at | DATETIME | 创建时间 |
-
----
-
-## 表关系简图
-
-```
-users ←→ countries (多对一, country_id)
-users ←→ sessions (一对多)
-users ←→ online_players (一对一/缓存)
-users ←→ news (author_id)
-users ←→ proposals (proposer_id)
-users ←→ votes (user_id)
-users ←→ conventions (enacted_by_user_id)
-users ←→ cases (plaintiff_id)
-users ←→ case_evidence (uploaded_by_user_id)
-users ←→ diplomatic_relations (set_by_user_id)
-users ←→ trades (posted_by_user_id)
-
-countries ←→ proposals (country_id)
-countries ←→ cases (defendant_country_id)
-countries ←→ diplomatic_relations (country1_id, country2_id)
-countries ←→ trades (country_id)
-
-proposals ←→ votes (proposal_id)
-proposals ←→ conventions (proposal_id)
-cases ←→ case_evidence (case_id)
-cases ←→ arbitration_archive (case_id)
-```
-
----
-
-## 字符集建议
-
-建表时建议使用：
+**邦国玩家列表**与**玩家信息缓存**共用这一张表：
 
 ```sql
-DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+-- 玩家信息缓存
+SELECT player_name, player_id, country_id FROM players WHERE player_name = ?;
+
+-- 邦国玩家列表
+SELECT player_name, player_id FROM players WHERE country_id = ?;
 ```
 
-与 `php/config.php` 中 `DB_CHARSET` 一致。
+只保留规格要求的三个业务字段：玩家名、玩家ID、玩家所属邦国ID。
 
+---
 
+## 四、社区域
 
+身份列一律引用 `passport_accounts(id)`，列名保持与旧库一致，
+以便旧接口文件在不改动的情况下继续读数据。
+
+| 表 | 说明 |
+|---|---|
+| `news` | 世界动态（`author_id`） |
+| `timeline` | 历史时间轴 |
+| `proposals` | 社区大会提案（`proposer_id`、`country_id`） |
+| `votes` | 表决记录（`user_id`、`proposal_id`，唯一键防重复投票） |
+| `conventions` | 世界公约（`enacted_by_user_id`） |
+| `cases` | 国际法庭案件（`plaintiff_id`、`defendant_country_id`） |
+| `case_evidence` | 案件证据 |
+| `arbitration_archive` | 仲裁结果库（判例） |
+| `diplomatic_relations` | 外交关系（国家对唯一） |
+| `trades` | 贸易信息（`posted_by_user_id`） |
+| `services` | 公共服务 |
+
+---
+
+## 五、遗留兼容层（迁移期使用，后续版本移除）
+
+| 对象 | 为什么还在 | 计划 |
+|---|---|---|
+| `users`（**视图**） | 旧接口里大量 `LEFT JOIN users` 依赖它，视图让读路径零改动 | 待全部读路径迁移后移除 |
+| `online_players` | 旧的在线缓存表，新架构以 `passport_sessions.last_seen_at` 为准 | 移除 |
+| `api_keys` | 旧的静态 API Key，新架构统一走 OAuth2 | 迁移到 `passport_oauth_clients` 后移除 |
+| `api_logs` | 旧调用日志，已被 `passport_api_logs` 取代 | 移除 |
+
+`users` 视图字段映射：
+
+```
+id, username, password(=password_hash), game_id(=player_name), player_id,
+country_id, role, jhtuid(=simpass_uid), level(=simpass_level),
+email, status, last_login_at, created_at
+```
+
+⚠ 视图是**只读**兼容层。写入请走通行证 API（`/passport/api/v1/*`）。
+
+---
+
+## 字符集
+
+所有表统一：
+
+```sql
+ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+```
+
+与 `.env` 中的 `DB_CHARSET=utf8mb4` 一致。

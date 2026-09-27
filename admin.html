@@ -110,12 +110,13 @@
                             <input type="password" id="admin-password" class="nes-input" placeholder="请输入密码" required>
                         </div>
                         <div class="nes-field">
-                            <label for="admin-game-id">游戏ID <span class="required">*</span></label>
-                            <input type="text" id="admin-game-id" class="nes-input" placeholder="请输入游戏ID" required>
+                            <label for="admin-email">验证邮箱 <span class="required">*</span></label>
+                            <input type="email" id="admin-email" class="nes-input" placeholder="用于接收通知与找回密码" required>
                         </div>
                         <div class="nes-field">
-                            <label for="admin-country">所属邦国</label>
-                            <input type="text" id="admin-country" class="nes-input" placeholder="请输入邦国名称">
+                            <label for="admin-player-name">游戏内玩家名 <span class="required">*</span></label>
+                            <input type="text" id="admin-player-name" class="nes-input" placeholder="必须与服务器内完全一致" required>
+                            <small>提交时会调用权威接口校验；所属邦国自动识别，无需手工填写。</small>
                         </div>
                         <div class="nes-field">
                             <label for="admin-role">用户角色</label>
@@ -343,47 +344,7 @@
         </div>
     </div>
 
-    <div class="modal-overlay" id="registerModal">
-        <div class="modal nes-container with-title">
-            <h3 class="title">注册</h3>
-            <button class="close-modal" id="closeRegisterModal">&times;</button>
-            <form id="registerForm">
-                <div class="nes-field">
-                    <label for="register-username">用户名 <span class="required">*</span></label>
-                    <input type="text" id="register-username" class="nes-input" required>
-                </div>
-                <div class="nes-field">
-                    <label for="register-password">密码 <span class="required">*</span></label>
-                    <input type="password" id="register-password" class="nes-input" required>
-                </div>
-                <div class="nes-field">
-                    <label for="register-password-confirm">确认密码 <span class="required">*</span></label>
-                    <input type="password" id="register-password-confirm" class="nes-input" required>
-                </div>
-                <div class="nes-field">
-                    <label for="register-game-id">游戏ID <span class="required">*</span></label>
-                    <input type="text" id="register-game-id" class="nes-input" required>
-                </div>
-                <div class="nes-field">
-                    <label for="register-jhtuid">简幻通UID <span class="required">*</span></label>
-                    <input type="text" id="register-jhtuid" class="nes-input" required>
-                </div>
-                <div class="nes-field">
-                    <label for="register-jht-code">验证码 <span class="required">*</span></label>
-                    <input type="text" id="register-jht-code" class="nes-input" required>
-                </div>
-                <div class="nes-field">
-                    <label for="register-country">所属邦国（可选）</label>
-                    <input type="text" id="register-country" class="nes-input" placeholder="请输入邦国名称">
-                </div>
-                <div class="form-actions">
-                    <button type="submit" class="nes-btn is-primary">注册</button>
-                    <button type="button" class="nes-btn cancel-btn">取消</button>
-                </div>
-                <div class="form-message" id="registerFormMessage"></div>
-            </form>
-        </div>
-    </div>
+    <!-- 注册入口已统一收敛到 8W通行证系统（/passport/），站内不再保留第二套注册表单 -->
 
     <!-- 全局加载动画 -->
     <div id="globalLoading" class="global-loading">

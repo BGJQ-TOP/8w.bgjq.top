@@ -754,7 +754,7 @@ async function verifyPlayerWithRetry(gameId, maxRetries = 2) {
 function initAuth() {
     checkCurrentUser();
     initLoginModal();
-    initRegisterModal();
+    initRegisterEntry();
     initLogout();
 }
 
@@ -869,112 +869,6 @@ function initLoginModal() {
     });
 }
 
-function initRegisterModal() {
-    const registerModal = document.getElementById('registerModal');
-    const showBtn = document.getElementById('showRegisterBtn');
-    const closeBtn = document.getElementById('closeRegisterModal');
-    const form = document.getElementById('registerForm');
-    const cancelBtn = form.querySelector('.cancel-btn');
-
-    showBtn?.addEventListener('click', () => registerModal.classList.add('active'));
-    closeBtn?.addEventListener('click', () => registerModal.classList.remove('active'));
-    cancelBtn?.addEventListener('click', () => registerModal.classList.remove('active'));
-    
-    registerModal?.addEventListener('click', (e) => {
-        if (e.target === registerModal) registerModal.classList.remove('active');
-    });
-
-    form?.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const username = document.getElementById('register-username')?.value || '';
-        const password = document.getElementById('register-password')?.value || '';
-        const passwordConfirm = document.getElementById('register-password-confirm')?.value || '';
-        const gameId = document.getElementById('register-game-id')?.value || '';
-        const countryName = document.getElementById('register-country')?.value || '';
-        const jhtUid = document.getElementById('register-jhtuid')?.value || '';
-        const jhtVerifyCode = document.getElementById('register-jht-code')?.value || '';
-        const messageEl = document.getElementById('registerFormMessage');
-
-        if (password !== passwordConfirm) {
-            showMessage('两次输入的密码不一致', 'error');
-            return;
-        }
-
-        if (!jhtUid.trim() || !jhtVerifyCode.trim()) {
-            showMessage('请填写简幻通UID和验证码', 'error');
-            return;
-        }
-
-        // 显示全局加载动画
-        const globalLoading = document.getElementById('globalLoading');
-        if (globalLoading) {
-            globalLoading.style.setProperty('display', 'flex', 'important');
-        }
-        if (messageEl) {
-            messageEl.style.display = 'none';
-        }
-
-        try {
-            // 验证玩家ID是否存在（带重试机制）
-            const playerIdCheck = await verifyPlayerWithRetry(gameId);
-            
-            if (playerIdCheck.error) {
-                throw new Error(playerIdCheck.error);
-            }
-
-            // 验证邦国是否存在（如果不是'流民'）
-            let countryData = null;
-            if (countryName && countryName.trim() !== '流民') {
-                const countryCheck = await apiRequest('/countries.php?action=name&name=' + encodeURIComponent(countryName.trim()));
-                
-                if (countryCheck.error) {
-                    throw new Error('所属邦国不存在');
-                }
-                
-                countryData = countryCheck.data.country;
-            }
-
-            const payload = { username, password: '(隐藏)', game_id: gameId, country_name: countryName, jhtuid: jhtUid, verify_code: jhtVerifyCode };
-            debugLog('Register', '提交注册', payload);
-            const result = await apiRequest('/auth.php?action=register', {
-                method: 'POST',
-                body: JSON.stringify({ 
-                    username, 
-                    password, 
-                    game_id: gameId, 
-                    country_name: countryName,
-                    jhtuid: jhtUid,
-                    verify_code: jhtVerifyCode
-                })
-            });
-
-            debugLog('Register', '接口返回', result);
-            if (result.error) {
-                showMessage(result.error, 'error');
-            } else {
-                if (registerModal) {
-                    registerModal.classList.remove('active');
-                }
-                if (form) {
-                    form.reset();
-                }
-                showMessage('注册成功！请登录', 'success');
-                const loginModal = document.getElementById('loginModal');
-                if (loginModal) {
-                    loginModal.classList.add('active');
-                }
-            }
-        } catch (error) {
-            showMessage(error.message || '验证失败，请检查输入信息', 'error');
-        } finally {
-            // 隐藏全局加载动画
-            const globalLoading = document.getElementById('globalLoading');
-            if (globalLoading) {
-                globalLoading.style.setProperty('display', 'none', 'important');
-            }
-        }
-    });
-}
 
 function initLogout() {
     document.getElementById('logoutBtn')?.addEventListener('click', async () => {
@@ -2035,14 +1929,15 @@ function initAddUserForm() {
         e.preventDefault();
         const username = document.getElementById('admin-username').value;
         const password = document.getElementById('admin-password').value;
-        const gameId = document.getElementById('admin-game-id').value;
-        const countryName = document.getElementById('admin-country').value;
+        const email = document.getElementById('admin-email').value;
+        const playerName = document.getElementById('admin-player-name').value;
         const role = document.getElementById('admin-role').value;
         const messageEl = document.getElementById('addUserFormMessage');
-        
+
+        // 所属邦国由权威接口按玩家名自动识别，不再手工选择
         const result = await apiRequest('/users.php', {
             method: 'POST',
-            body: JSON.stringify({ username, password, game_id: gameId, country_name: countryName, role })
+            body: JSON.stringify({ username, password, email, player_name: playerName, role })
         });
         
         if (result.error) {
@@ -2083,12 +1978,10 @@ async function editUser(userId) {
         newRole = roleOptions[roleChoice - 1].value;
     }
     
-    const newCountry = prompt('输入新邦国名称（留空则不修改）:', user.country_name || '');
-    
+    // 所属邦国由权威接口提供，不接受手工修改（如需变更请核对游戏内数据后重新同步）
     const updateData = {};
     if (newPassword) updateData.password = newPassword;
     if (newRole) updateData.role = newRole;
-    if (newCountry !== undefined) updateData.country_name = newCountry;
     
     if (Object.keys(updateData).length > 0) {
         const updateResult = await apiRequest(`/users.php?id=${userId}`, {
@@ -2645,3 +2538,14 @@ function updateUserPanel() {
 
 
 
+
+function initRegisterEntry() {
+    // 注册已统一收敛到独立的 8W通行证系统（/passport/），
+    // 站内不再保留第二套注册表单，避免身份数据分叉。
+    const entry = document.getElementById('showRegisterBtn');
+    if (!entry) { return; }
+
+    // 兼容两种形态：<a href> 直接跳转；<button> 由这里接管
+    if (entry.tagName === 'A') { return; }
+    entry.addEventListener('click', () => { window.location.href = '/passport/'; });
+}

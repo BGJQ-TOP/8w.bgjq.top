@@ -95,10 +95,10 @@ function getServerInfo($db) {
             if (!empty($userNames)) {
                 $placeholders = implode(',', array_fill(0, count($userNames), '?'));
                 $stmt = $db->prepare("
-                    SELECT u.username, c.name as country_name 
-                    FROM users u 
-                    LEFT JOIN countries c ON u.country_id = c.id
-                    WHERE u.username IN ($placeholders)
+                    SELECT a.player_name AS username, c.name as country_name 
+                    FROM passport_accounts a 
+                    LEFT JOIN countries c ON a.country_id = c.id
+                    WHERE a.player_name IN ($placeholders)
                 ");
                 $stmt->execute($userNames);
                 $users = $stmt->fetchAll(PDO::FETCH_ASSOC);

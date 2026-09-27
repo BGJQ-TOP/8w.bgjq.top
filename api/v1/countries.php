@@ -283,7 +283,9 @@ function deleteCountry($db, $auth, $id) {
         jsonError('邦国不存在', 404);
     }
     
-    $stmt = $db->prepare("UPDATE users SET country_id = NULL WHERE country_id = ?");
+    // 身份表已迁移到通行证：解绑的是 passport_accounts.country_id
+    // （该字段是权威接口的本地缓存，下次同步会自动回填）
+    $stmt = $db->prepare("UPDATE passport_accounts SET country_id = NULL WHERE country_id = ?");
     $stmt->execute([$id]);
     
     $stmt = $db->prepare("DELETE FROM diplomatic_relations WHERE country1_id = ? OR country2_id = ?");

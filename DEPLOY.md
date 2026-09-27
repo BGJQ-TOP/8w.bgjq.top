@@ -33,63 +33,67 @@
 
 ### 1. 数据库配置
 
-#### 1.1 创建数据库和用户
+> 身份与认证已迁移到独立的「8W通行证系统」。
+> 数据库结构、账号授权的唯一真源是 `database/8w_passport.sql`。
+> 新库为 `bgjq8w`，旧的 `bgjq` 已废弃（清理方式见 `docs/MIGRATION.md`）。
 
-首先登录MySQL/MariaDB：
-
-```bash
-mysql -u root -p
-```
-
-然后执行以下命令：
-
-```sql
--- 创建数据库
-CREATE DATABASE IF NOT EXISTS bgjq DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
--- 创建用户
-CREATE USER IF NOT EXISTS 'bgjq'@'localhost' IDENTIFIED BY 'YOUR_DB_PASSWORD';
-
--- 授予权限
-GRANT ALL PRIVILEGES ON bgjq.* TO 'bgjq'@'localhost';
-FLUSH PRIVILEGES;
-```
-
-#### 1.2 导入数据库结构
+#### 1.1 准备 .env
 
 ```bash
-mysql -u bgjq -p bgjq < database.sql
+cp .env.example .env
 ```
 
-或者在MySQL客户端中：
+填写 `DB_NAME` / `DB_USER` / `DB_PASS` 三项（新库名不得与旧的 `bgjq` 相同）。
 
-```sql
-USE bgjq;
-SOURCE /path/to/database.sql;
+#### 1.2 一键建库 + 建账号 + 授权 + 建表
+
+`database/8w_passport.sql` 里的密码位置是占位符 `__DB_PASSWORD__`，
+由脚本从 `.env` 读取真实值渲染后执行，执行完立即删除临时文件，
+**保证真实密码不会落进版本库**：
+
+```bash
+pwsh ./bin/init-database.ps1
+```
+
+只想先看看会执行什么：
+
+```bash
+pwsh ./bin/init-database.ps1 -DryRun
+```
+
+也可以手工导入（需先把 `__DB_PASSWORD__` 换成真实密码，且不要把替换后的文件提交）：
+
+```bash
+mysql -u root -p < 8w_passport.rendered.sql
 ```
 
 ### 2. 网站配置
 
-#### 2.1 修改配置文件
+#### 2.1 配置文件
 
-编辑 `php/config.php`，根据需要修改以下配置：
+**所有敏感配置都放在项目根目录的 `.env`**（已被 `.gitignore` 排除）。
+变量清单见 `.env.example`，其中关键几项：
 
-```php
-// 数据库配置（如果不同）
-define('DB_HOST', 'localhost');
-define('DB_NAME', 'bgjq');
-define('DB_USER', 'YOUR_DB_USER');
-define('DB_PASS', 'YOUR_DB_PASSWORD');
+```ini
+# 数据库
+DB_HOST=localhost
+DB_NAME=bgjq8w
+DB_USER=bgjq8w
+DB_PASS=******
 
-// 网站配置
-define('SITE_NAME', '8W社区');
-define('SITE_URL', 'https://8w.bgjq.top');
+# 通行证
+PASSPORT_BASE_URL=https://8w.bgjq.top
+PASSPORT_SESSION_TTL=86400
 
-// 会话配置
-define('SESSION_LIFETIME', 86400); // 24小时
-define('COOKIE_DOMAIN', '');
-define('COOKIE_SECURE', false); // 如果使用HTTPS，设置为true
+# 权威数据接口（待接入，见 passport/README.md 的 TODO 清单）
+PLAYER_API_BASE=
+COUNTRY_API_BASE=
+SIMPASS_API_URL=
+EMAIL_API_URL=
 ```
+
+`php/config.php` 只负责社区站点自身的数据库连接，通过 `env()` 读取上述变量，
+不再硬编码任何凭据。
 
 ### 3. Web服务器配置
 
@@ -197,37 +201,24 @@ memory_limit = 256M
 date.timezone = Asia/Shanghai
 ```
 
-### 6. 初始化管理员账户
+### 6. 初始管理员账户
 
-创建一个初始化脚本 `init_admin.php`：
+数据库初始化脚本已经写入首个管理员通行证：
 
-```php
-<?php
-require_once 'php/config.php';
-
-$db = getDBConnection();
-$auth = new Auth($db);
-
-try {
-    $userId = $auth->register('admin', '你的密码', 'admin_game_id', null);
-    
-    $stmt = $db->prepare("UPDATE users SET role = ? WHERE id = ?");
-    $stmt->execute([ROLE_SECRETARY_GENERAL, $userId]);
-    
-    echo "管理员账户创建成功！\n";
-    echo "用户名: admin\n";
-} catch (Exception $e) {
-    echo "错误: " . $e->getMessage() . "\n";
-}
+```
+用户名：LouieMAIN
+邮箱：  admin@bgjq.top
+密码：  Lyizai211
 ```
 
-在命令行执行：
+**登录后请立即修改密码与邮箱。** 登录入口：`https://8w.bgjq.top/passport/`
 
-```bash
-php init_admin.php
-```
+新增管理员可通过两种方式：
 
-执行后记得删除这个文件！
+1. 用已有管理员登录 `/passport/`，在「第三方应用管理」下方的账号体系里维护（或走 `/api/v1/users.php`）
+2. 直接改写 `database/8w_passport.sql` 末尾的初始数据段后重新导入
+
+管理员角色为 `secretary_general`，可用 `.env` 的 `PASSPORT_ADMIN_ROLES` 调整。
 
 ### 7. 测试
 

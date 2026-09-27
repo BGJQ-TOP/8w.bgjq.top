@@ -107,7 +107,9 @@ function getStats($db) {
     $stmt = $db->query("SELECT COUNT(*) as total FROM trades WHERE status = 'active'");
     $stats['active_trades'] = (int)$stmt->fetch()['total'];
 
-    $stmt = $db->query("SELECT COUNT(*) as total FROM online_players WHERE last_seen >= DATE_SUB(NOW(), INTERVAL 5 MINUTE)");
+    // 在线人数以通行证会话为准（旧 online_players 表已废弃）
+    $stmt = $db->query("SELECT COUNT(DISTINCT account_id) as total FROM passport_sessions
+                        WHERE expires_at > NOW() AND last_seen_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE)");
     $stats['online_players'] = (int)$stmt->fetch()['total'];
 
     $stmt = $db->query("SELECT COUNT(*) as total FROM diplomatic_relations");

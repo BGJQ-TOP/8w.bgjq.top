@@ -1,8 +1,11 @@
 <?php
 /**
  * 数据库配置文件
- * 敏感配置请存放在项目根目录的 .env 文件中
- * .env 已被 .gitignore 排除，不会提交到公开仓库
+ *
+ * 敏感配置一律存放在项目根目录的 .env 中（已被 .gitignore 排除）。
+ *
+ * 身份与认证已迁移到独立的「8W通行证系统」，见 passport/ 目录。
+ * 本文件只负责社区站点自身的数据库连接与通用工具函数。
  */
 
 // ========== .env 文件加载器 ==========
@@ -54,10 +57,10 @@ define('SITE_NAME', '8W社区');
 define('SITE_URL', 'https://8w.bgjq.top');
 
 // 简幻通（SimpGate）配置
-// 验证接口地址
-define('SIMPPASS_API_URL', 'https://pass.xiaoli.top/api/simppass/auth');
-// 后台提供的 API 调用令牌
-define('SIMPPASS_ACCESS_TOKEN', env('SIMPPASS_ACCESS_TOKEN', 'YOUR_SIMPPASS_ACCESS_TOKEN'));
+// 现已统一由 8W通行证系统接管（passport/src/Verification/HttpSimpassVerifier.php），
+// 这里保留常量只为兼容尚未迁移的旧代码。
+define('SIMPPASS_API_URL', env('SIMPASS_API_URL', ''));
+define('SIMPPASS_ACCESS_TOKEN', env('SIMPPASS_ACCESS_TOKEN', ''));
 
 // 会话配置
 define('SESSION_LIFETIME', 86400); // 24小时
@@ -143,27 +146,12 @@ function getDBConnection() {
 
 /**
  * 确保 users 表存在 jhtuid、level 字段，不存在时自动添加
+ *
+ * @deprecated 身份表已迁移到 8W通行证（passport_accounts）。
+ *             旧 users 现在只是只读兼容视图，无法 ALTER，本函数已废弃为空实现。
  */
 function ensureUsersExtraColumns(PDO $pdo) {
-    try {
-        $columnsToAdd = [
-            'jhtuid' => 'TEXT NULL',
-            'level'  => 'TEXT NULL'
-        ];
-        
-        foreach ($columnsToAdd as $column => $definition) {
-            // 使用字符串拼接而不是预处理语句
-            $stmt = $pdo->query("SHOW COLUMNS FROM `users` LIKE '{$column}'");
-            $exists = $stmt->fetch();
-            
-            if (!$exists) {
-                $pdo->exec("ALTER TABLE `users` ADD COLUMN `{$column}` {$definition}");
-                if (function_exists('appLog')) appLog('DB', '已添加列', ['table' => 'users', 'column' => $column]);
-            }
-        }
-    } catch (PDOException $e) {
-        if (function_exists('appLog')) appLog('DB', 'ensureUsersExtraColumns 异常', ['message' => $e->getMessage(), 'code' => $e->getCode()]);
-    }
+    return;
 }
 
 // JSON响应函数

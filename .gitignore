@@ -33,4 +33,11 @@ uploads/
 
 # 环境配置
 .env
-.env.local
+.env.*
+!.env.example
+
+# 通行证运行期文件（日志等）
+passport/storage/
+
+# 数据库初始化脚本的渲染产物（内含真实密码，绝不入库）
+database/*.rendered.sql
