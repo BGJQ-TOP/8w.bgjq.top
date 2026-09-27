@@ -47,7 +47,7 @@ loadEnv($envFile);
 
 // ========== 数据库配置 ==========
 define('DB_HOST', env('DB_HOST', 'localhost'));
-define('DB_NAME', env('DB_NAME', 'bgjq'));
+define('DB_NAME', env('DB_NAME', 'bgjq8w'));  // 旧库 bgjq 已废弃
 define('DB_USER', env('DB_USER', 'YOUR_DB_USER'));
 define('DB_PASS', env('DB_PASS', 'YOUR_DB_PASSWORD'));
 define('DB_CHARSET', 'utf8mb4');
