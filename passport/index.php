@@ -1045,20 +1045,20 @@ $scopes = Scope::describe();
         var confirmUnbind = document.querySelector('[data-confirm-unbind="' + key + '"]');
         if (confirmUnbind) {
             confirmUnbind.addEventListener('click', function () {
-                var password = $('bind-' + key + '-password').value;
-
+                // 密码走请求体，不放查询串：URL 会进访问日志、浏览器历史与 Referer
                 setLoading(confirmUnbind, true);
-                request('/bindings?type=' + encodeURIComponent(key)
-                    + '&password=' + encodeURIComponent(password), { method: 'DELETE' })
-                    .then(function (result) {
-                        setLoading(confirmUnbind, false);
-                        if (!result.ok) {
-                            toast(result.error ? result.error.message : '解绑失败', 'error');
-                            return;
-                        }
-                        toast('已解绑', 'success');
-                        renderBindings(result.data.bindings);
-                    });
+                request('/bindings', {
+                    method: 'DELETE',
+                    body: { type: key, password: $('bind-' + key + '-password').value }
+                }).then(function (result) {
+                    setLoading(confirmUnbind, false);
+                    if (!result.ok) {
+                        toast(result.error ? result.error.message : '解绑失败', 'error');
+                        return;
+                    }
+                    toast('已解绑', 'success');
+                    renderBindings(result.data.bindings);
+                });
             });
         }
 

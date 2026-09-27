@@ -10,10 +10,13 @@
  *            { "type": "email",     "email": "a@b.com", "code": "123456", "password": "当前密码" }
  *            { "type": "fanverify", "uid": 10086,       "code": "654321", "password": "当前密码" }
  *
- *   DELETE /passport/api/v1/bindings?type=email|fanverify&password=当前密码
- *          解绑
+ *   DELETE /passport/api/v1/bindings
+ *          解绑。密码放在**请求体**里，不放查询串：
+ *            { "type": "email",     "password": "当前密码" }
+ *            { "type": "fanverify", "password": "当前密码" }
  *
  * 安全：绑定与解绑都会改变账号的找回途径，因此都要求提供当前密码。
+ * 密码一律走请求体 —— 放进 URL 会被 Web 服务器访问日志、浏览器历史与 Referer 记录下来。
  *
  * 必填绑定（游戏内玩家名、简幻通）不在此处管理，无法解绑。
  */
@@ -87,8 +90,9 @@ function w8_bind(BindingService $bindings, Request $request, $account)
  */
 function w8_unbind(BindingService $bindings, Request $request, $account)
 {
+    // type 无敏感性，允许放查询串；password 只从请求体读
     $type = strtolower($request->string('type', (string) $request->query('type', '')));
-    $password = (string) $request->input('password', (string) $request->query('password', ''));
+    $password = (string) $request->input('password', '');
 
     if ($type === BindingService::TYPE_EMAIL) {
         $updated = $bindings->unbindEmail($account, $password);
