@@ -312,8 +312,10 @@ mysql -u root -p < 8w_passport.rendered.sql
 
 - 文件头注释改为「身份与认证已迁移到独立的 8W通行证系统，见 `passport/` 目录」。
 - `SIMPPASS_API_URL` / `SIMPPASS_ACCESS_TOKEN` 两个常量改为从 `.env` 读
-  （旧版把接口地址硬编码在源码里），保留只为兼容尚未迁移的旧代码；
-  通行证自己走 `SIMPASS_API_URL` / `SIMPPASS_ACCESS_TOKEN` 配置。
+  （旧版把接口地址硬编码在源码里），保留只为兼容尚未迁移的旧代码。
+  ⚠ 变量名拼写不统一，照抄即可：接口地址是 `SIMPASS_API_URL`（**单 P**），
+  调用令牌是 `SIMPPASS_ACCESS_TOKEN`（**双 P**）；通行证自己的 `Config` 用的是同样这两个键，
+  所以 `.env` 里只需各配一次，旧常量与通行证两边都会生效。
 - `ensureUsersExtraColumns()` 标记 `@deprecated` 并改为空实现（见 3.3）。
 - `DB_NAME` 的兜底默认值仍是 `'bgjq'`，**只在 `.env` 缺失时才生效**；正常部署必须显式配置 `DB_NAME=bgjq8w`。
 
