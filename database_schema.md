@@ -116,13 +116,16 @@ SELECT player_name, player_id FROM players WHERE country_id = ?;
 | `api_keys` | 旧的静态 API Key，新架构统一走 OAuth2 | 迁移到 `passport_oauth_clients` 后移除 |
 | `api_logs` | 旧调用日志，已被 `passport_api_logs` 取代 | 移除 |
 
-`users` 视图字段映射：
+`users` 视图字段映射（共 12 列）：
 
 ```
-id, username, password(=password_hash), game_id(=player_name), player_id,
+id, username, game_id(=player_name), player_id,
 country_id, role, jhtuid(=simpass_uid), level(=simpass_level),
 email, status, last_login_at, created_at
 ```
+
+⚠ 视图**刻意不暴露密码哈希**（没有 `password(=password_hash)` 这一列）：视图一旦带上哈希，
+旧代码里的 `SELECT u.*` 就会把它顺手返回给前端。需要校验密码的代码直接读 `passport_accounts.password_hash`。
 
 ⚠ 视图是**只读**兼容层。写入请走通行证 API（`/passport/api/v1/*`）。
 

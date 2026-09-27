@@ -27,7 +27,8 @@
 
 - **主站消费通行证有两条路**：
   1. `php/classes/Auth.php` —— 兼容类。保留旧方法签名（`isLoggedIn()` / `getCurrentUser()` / `hasRole()` / `login()` / `logout()` …），内部全部委托给通行证服务；登录态以通行证会话 Cookie 为唯一真源，`$_SESSION['user']` 只是给旧页面看的镜像，不参与鉴权判定。
-  2. 数据库里的 **`users` 只读视图** —— 旧接口文件里大量 `LEFT JOIN users u ON ... = u.id` 因此继续可用。视图从 `passport_accounts` 派生，列名保持旧名（`password` / `game_id` / `jhtuid` / `level`）。
+  2. 数据库里的 **`users` 只读视图** —— 旧接口文件里大量 `LEFT JOIN users u ON ... = u.id` 因此继续可用。视图从 `passport_accounts` 派生，列名保持旧名（`game_id` / `jhtuid` / `level` …），共 12 列。
+     ⚠ 视图**刻意不提供 `password` 列**：视图一旦带上密码哈希，任何旧的 `SELECT u.*` 都会把它返回给前端。需要校验密码请直接读 `passport_accounts`（`Account::passwordHash()`）。
 - **主站不写身份**：所有对 `passport_accounts` 的写入都收敛在 `src/Identity/AccountRepository.php`；主站要建号/改密/停用，走 `Auth` 兼容类或通行证 API。
 - **主站自身业务表**（`news` / `proposals` / `votes` / `cases` / `trades` …）继续存在，其身份列（`author_id` / `user_id` / `proposer_id` …）统一引用 `passport_accounts.id`。
 - **注册入口只有一处**：`/passport/`。主站 `index.html`、`admin.html` 的旧注册弹窗已删除，`js/main.js` 的 `initRegisterEntry()` 只负责跳转。
@@ -41,7 +42,7 @@ passport/
 ├── index.php                     通行证用户中心（登录/注册/账号信息/我的邦国/已授权应用/改密/管理员应用管理）
 ├── README.md                     本文件
 ├── api/
-│   ├── _guard.php                数据类接口共用访问守卫（Bearer 或会话 Cookie）+ w8_require_post()
+│   ├── _guard.php                数据类接口共用访问守卫（Bearer 令牌或会话 Cookie）
 │   ├── v1/                       第一方 JSON API（站内页面与第三方都可调）
 │   │   ├── register.php          POST   注册（委托 RegistrationService）
 │   │   ├── login.php             POST   登录（用户名或邮箱）
@@ -278,7 +279,7 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
   每小时最多 5 次、默认 10 分钟有效、最多 5 次校验失败后作废、校验成功即消费、发送失败自动作废刚写入的码。
 - **未接入时的表现**：
   - `POST /passport/api/v1/email-code` → 501 `not_implemented`「邮箱验证码发送接口尚未接入（TODO）。请在 .env 中配置 EMAIL_API_URL 后重试。」
-  - 注册第 ③ 步 → 501 `not_implemented`「邮箱验证码发送接口尚未接入，无法完成邮箱验证。…」
+  - 注册流程的邮箱验证码校验（三处外部校验中的最后一步）→ 501 `not_implemented`「邮箱验证码发送接口尚未接入，无法完成邮箱验证。…」
 
 ### 6.2 游戏内玩家
 
@@ -298,7 +299,7 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
   三个字段一个都没解析出来 → `null` 并记 `player_provider.unmapped_response`；
   传输失败 / 非 2xx / 非法 JSON → 抛 `ApiException`（500 `server_error`）。
 - **未接入时的表现**：
-  - 注册第 ① 步 → 501 `not_implemented`「玩家信息接口尚未接入，无法校验游戏内玩家名。请在 .env 中配置 PLAYER_API_BASE / PLAYER_API_PATH」
+  - 注册流程的玩家名校验（三处外部校验中的第一步）→ 501 `not_implemented`「玩家信息接口尚未接入，无法校验游戏内玩家名。请在 .env 中配置 PLAYER_API_BASE / PLAYER_API_PATH」
   - `GET /passport/api/v1/player`（且本地无该玩家缓存）→ 501
 
 ### 6.3 邦国信息
@@ -341,7 +342,7 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
   新接口若是 JSON body，把 `postForm(...)` 换成 `postJson(...)` 一行即可。
 - **交叉校验**：若配置了 `SIMPASS_API_PLAYER_FIELD` 且简幻通返回的绑定玩家名与用户填写的大小写不敏感不一致，
   直接 422 拒绝（`details.field = player_name`）。
-- **未接入时的表现**：注册第 ② 步 → 501 `not_implemented`「简幻通验证接口尚未接入，请在 .env 中配置 SIMPASS_API_URL / SIMPPASS_ACCESS_TOKEN」。
+- **未接入时的表现**：注册流程的简幻通校验（三处外部校验中的第二步）→ 501 `not_implemented`「简幻通验证接口尚未接入，请在 .env 中配置 SIMPASS_API_URL / SIMPPASS_ACCESS_TOKEN」。
 
 > 管理员可在 `/passport/` 页面的「接口接入状态」卡片里一眼看到四个接口哪些已接入、哪些待接入
 > （判定依据分别是 `emailVerifier()->isConfigured()` / `playerProvider()->isConfigured()` /

@@ -130,7 +130,7 @@ scope 由 `passport/src/OAuth/Scope.php` 的 `MAP` 常量唯一定义，逐条�
 | `player` | 游戏内玩家名、玩家ID、所属邦国ID |
 | `country` | 所属邦国ID（与 player 重复，供只关心邦国的应用使用） |
 | `simpass` | 简幻通ID与等级 |
-| `offline_access` | 允许通过 refresh_token 长期续期 |
+| `offline_access` | 刷新令牌到期后仍可继续换取新的刷新令牌（不申请则只能刷新一次） |
 | `directory` | 查询游戏内玩家与邦国公开信息（机器对机器） |
 
 补充规则：
@@ -440,8 +440,10 @@ token=<要吊销的令牌>&client_id=…&client_secret=…
 | `token` | 是 | 访问令牌或刷新令牌，命中任一哈希即吊销整条记录 |
 | `client_id` / `client_secret` | 是 | 或用 Basic 认证 |
 
-按规范，无论令牌是否存在都返回成功。本实现的响应是 **HTTP 200，响应体为 `[]`**（空数组），
-并带 `Cache-Control: no-store`。客户端只需判断状态码，不要解析响应体。
+按规范，无论令牌是否存在都返回成功。本实现的响应是 **HTTP 200，响应体为 `{}`**（空 JSON 对象，
+由 `passport/src/Http/Response.php` 的 `Response::emptyBody()` 产出），并带 `Cache-Control: no-store`。
+之所以不用 `[]`：`json_encode([])` 得到的是一个 JSON **数组**，容易被客户端误判成「一个列表」而按数组去解析；
+`{}` 明确表达「没有内容可解析」。客户端只需判断状态码，不要解析响应体。
 
 ---
 
@@ -497,13 +499,16 @@ Authorization: Bearer <access_token>
 | 字段 | 说明 |
 | --- | --- |
 | `data.player` | 玩家信息，字段固定为 `player_name` / `player_id` / `country_id` |
-| `data.source` | `cache` 表示本次请求前本地已有缓存、且未强制回源（直接用了缓存）；`authoritative` 表示走了回源分支 |
+| `data.source` | 结果的来源：`cache` = 来自本地缓存（**包括**「权威接口未接入或回源失败、降级使用旧缓存」的情况）；`authoritative` = 本次确实成功调用了权威接口并写入了缓存 |
 | `data.country` | 玩家所属邦国的完整信息，**仅在玩家有邦国且取数成功时出现**（第三方一次请求即可拿全） |
 | `data.country_unavailable` | 邦国接口不可用时的降级说明文案；此时 `data.country` 退化为本地缓存（若有） |
 
 **`fresh` 的真实语义**：它表示「跳过『缓存未过期就直接返回』这一步」，**不保证**拿到权威数据——
 数据源未配置或回源失败时，目录层仍会返回旧缓存（可用性优先）。
-相应地，`source` 只反映「是否走了回源分支」，不保证数据一定是权威实时值。
+相应地，`source` 描述的是**结果的实际来源**，而不是「是否尝试过回源」：
+回源失败而降级返回旧缓存时，它同样是 `cache`，不会冒充权威结果。
+只有本次真正调通权威接口并写入缓存才是 `authoritative`；也就是说 `source = "authoritative"`
+才意味着数据来自权威接口的实时返回，`cache` 则可能是已过期的旧值（降级场景）。
 
 **失败情形**：
 
@@ -577,7 +582,7 @@ Authorization: Bearer <access_token>
 | `forbidden` | 403 | 权限不足，例如令牌没有 `directory` scope |
 | `not_found` | 404 | 玩家或邦国不存在 |
 | `conflict` | 409 | 用户名 / 邮箱 / 游戏内玩家名 / 简幻通 ID 已被占用 |
-| `rate_limited` | 429 | 应用调用频率超限；邮箱验证码发送过于频繁 |
+| `rate_limited` | 429 | 应用调用频率超限（**不含令牌端点**，`POST /oauth/token` 见 11.2 的 `temporarily_unavailable`）；邮箱验证码发送过于频繁 |
 | `not_implemented` | 501 | 对应外部接口尚未接入（邮箱验证码 / 游戏内玩家 / 邦国 / 简幻通） |
 | `server_error` | 500 | 服务器内部错误；外部权威接口异常或返回无法解析的数据 |
 
@@ -595,12 +600,19 @@ Authorization: Bearer <access_token>
 | `unsupported_response_type` | 重定向 | 授权请求里 `response_type` 不是 `code` |
 | `invalid_scope` | 400 / 重定向 | scope 未知、与 `allowed_scopes` 无交集、刷新时试图扩大范围、`client_credentials` 申请非 `directory` |
 | `invalid_token` | 403 | `/oauth/userinfo` 收到不绑定任何用户的令牌（`client_credentials` 令牌） |
+| `temporarily_unavailable` | 429 | 应用调用频率超限，且请求打的是**令牌端点** `POST /oauth/token`（协议端点必须用 RFC 6749 格式，否则第三方 SDK 无法按协议解析） |
 | `access_denied` | 重定向 | 用户在授权确认页点了「拒绝」 |
 
-> ⚠ 有一个实现细节需要注意：**限流错误（`rate_limited`，429）走的是统一格式**
-> `{"ok":false,"error":{"code":"rate_limited","message":"该应用调用频率超限（每分钟 N 次）"}}`，
-> 即使发生在 `/oauth/token` 上也不是 RFC 6749 的 `{"error":…}` 格式。
-> 客户端应同时兼容两种失败结构。
+> ⚠ 限流错误的格式**取决于端点**，客户端需要两种都能处理：
+>
+> - **令牌端点 `POST /oauth/token`** 走 RFC 6749 格式：
+>   `HTTP 429` + `{"error":"temporarily_unavailable","error_description":"该应用调用频率超限（每分钟 N 次）"}`；
+> - **`/oauth/introspect`、`/oauth/revoke`**，以及资源端点（`/oauth/userinfo`、`/passport/api/v1/player`、
+>   `/passport/api/v1/country`）仍走统一格式：
+>   `HTTP 429` + `{"ok":false,"error":{"code":"rate_limited","message":"该应用调用频率超限（每分钟 N 次）"}}`。
+>
+> 也就是说：判断失败时要先看响应体里是 `error`（OAuth 格式，取 `error` 字段）还是 `error.code`
+> （统一格式），不能只按一种结构解析。邮箱验证码的限流（429 `rate_limited`）不受此影响，始终是统一格式。
 
 ---
 
@@ -617,15 +629,23 @@ Authorization: Bearer <access_token>
   ```
 
   即统计该 `client_id` 最近 60 秒内在 `passport_api_logs` 里的调用记录数；
-  当前值 `>= rate_limit` 时抛 `rate_limited`(429)「该应用调用频率超限（每分钟 N 次）」。
+  当前值 `>= rate_limit` 时抛限流错误，**格式随端点而变**（源码 `OAuthServer::assertRateLimit()` 的 `$oauthStyle` 参数）：
+
+  | 端点 | 错误格式 |
+  | --- | --- |
+  | `POST /oauth/token` | RFC 6749：`HTTP 429` + `{"error":"temporarily_unavailable","error_description":"该应用调用频率超限（每分钟 N 次）"}` |
+  | `/oauth/introspect`、`/oauth/revoke` | 统一格式：`HTTP 429` + `{"ok":false,"error":{"code":"rate_limited","message":"该应用调用频率超限（每分钟 N 次）"}}` |
+  | 资源端点（`/oauth/userinfo`、`/passport/api/v1/player`、`/passport/api/v1/country`） | 同上的统一格式 `rate_limited` |
 
 - 计数口径的两个事实，排错时用得上：
   1. 访问日志是**在响应发出之后**写入的，因此当前这次请求本身还没被计入；
   2. 只有标记了客户端上下文的请求才会写入 `client_id`——即带 Bearer 令牌调用资源接口
      （`/passport/api/v1/player`、`/passport/api/v1/country`）和 `/oauth/userinfo` 时；
      `/oauth/token`、`/oauth/introspect`、`/oauth/revoke` 的调用记录 `client_id` 为 `NULL`，不参与限流计数。
-- 邮箱验证码另有独立限流（与 scope 无关）：同一邮箱同一场景 **60 秒**内不能重发，
-  **每小时最多 5 次**，超限返回 429 `rate_limited`。
+- 邮箱验证码另有独立限流（与 scope 无关）：同一邮箱同一场景 **60 秒**内不能重发
+  （超限文案「验证码已发送，请 N 秒后再试」），**每小时最多 5 次**
+  （超限返回 429 `rate_limited`「该邮箱一小时内发送次数过多，请稍后再试」）。
+  两者都是统一格式，与 OAuth 协议端点无关。
 
 ---
 
@@ -706,7 +726,7 @@ curl -sS -i -X POST https://8w.bgjq.top/oauth/revoke \
   -d 'token=REPLACE_WITH_ACCESS_TOKEN' \
   -d 'client_id=YOUR_CLIENT_ID' \
   -d 'client_secret=YOUR_CLIENT_SECRET'
-# HTTP/1.1 200，响应体为 []
+# HTTP/1.1 200，响应体为 {}
 ```
 
 **内省令牌是否有效**

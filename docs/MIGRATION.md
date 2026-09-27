@@ -166,14 +166,13 @@ mysql -u root -p < 8w_passport.rendered.sql
 
 ### 3.1 `users` 视图的列映射
 
-`database/8w_passport.sql` 里 `DROP VIEW IF EXISTS users;` 之后重建视图，映射关系如下
+`database/8w_passport.sql` 里 `DROP VIEW IF EXISTS users;` 之后重建视图，共 **12 列**，映射关系如下
 （左：视图列名，即旧代码用的名字；右：`passport_accounts` 的真实列）：
 
 | `users` 视图列 | 来源 `passport_accounts` 列 |
 | --- | --- |
 | `id` | `id` |
 | `username` | `username` |
-| `password` | `password_hash` |
 | `game_id` | `player_name` |
 | `player_id` | `player_id` |
 | `country_id` | `country_id` |
@@ -185,12 +184,18 @@ mysql -u root -p < 8w_passport.rendered.sql
 | `last_login_at` | `last_login_at` |
 | `created_at` | `created_at` |
 
+> ⚠ 视图**刻意不暴露** `password_hash`——早前的版本里曾有一列 `password`（= `password_hash`），现已删除。
+> 原因：视图一旦带上密码哈希，任何遗留的 `SELECT u.*` 都会把 bcrypt 哈希顺手返回给前端
+> （`api/v1/countries.php` 就踩过这个坑，现已改成显式字段白名单）。
+> **需要校验密码的代码一律直接读 `passport_accounts`**（见 `passport/src/Identity/Account::passwordHash()`），
+> 不要指望视图提供密码列。
+
 ### 3.2 视图的作用：为什么保留
 
 旧接口文件里有大量 `LEFT JOIN users u ON … = u.id` 的写法（见[第六节](#六遗留兼容层清单与移除计划)），
 它们只**读**用户信息用于展示（用户名、角色、所属邦国）。把这些查询一次性全部改写成
-`JOIN passport_accounts` 会把一次重构铺得过大、风险过高，所以先建一个列名完全兼容的只读视图，
-让旧代码**一行不改**继续工作。
+`JOIN passport_accounts` 会把一次重构铺得过大、风险过高，所以先建一个沿用旧列名的只读视图
+（唯一例外是**不再提供 `password` 列**，见 3.1 的说明），让只读展示类旧代码**一行不改**继续工作。
 
 ### 3.3 视图的限制（重要）
 
@@ -233,8 +238,10 @@ mysql -u root -p < 8w_passport.rendered.sql
   不参与鉴权判定；`hasRole()` 用 `roleLevel()` 等级表比较（`observer` 0 / `diplomat` 1 /
   `peacekeeper` 2 / `permanent_member` 3 / `secretary_general` 4）。
 - **`toLegacyUser()` 提供旧字段名**：`id`、`username`、`email`、`game_id`（= `player_name`）、`player_id`、
-  `country_id`、`role`、`status`、`jhtuid`（= `simpass_uid`）、`level`（= `simpass_level`）、`created_at`；
-  仅后台管理场景（`getUserByUsername` / `getUserById`）额外附带 `password` 哈希。
+  `country_id`、`role`、`status`、`jhtuid`（= `simpass_uid`）、`level`（= `simpass_level`）、`created_at`。
+  旧版的 `$includeSecret` 参数已彻底移除：`getUserByUsername()` / `getUserById()` 的返回值里**同样没有**
+  `password` 字段。原因：这个数组会被 `jsonSuccess()` 直接序列化给前端，带上哈希等于把全站账号的密码哈希送到浏览器。
+  需要校验密码请用 `passport/src/Identity/Account::passwordHash()`。
 - **新增 `provision()`（管理员直接开号）**：仍需用户名/密码/邮箱/玩家名齐全，玩家名照样走权威接口校验，
   但**跳过**邮箱验证码与简幻通验证码。
 - **`resetPassword()` 语义变化**：旧版要简幻通 UID + 验证码，现在只需原密码 + 新密码
@@ -274,16 +281,20 @@ mysql -u root -p < 8w_passport.rendered.sql
 - `DELETE`（删号）调用 `Auth::deleteAccount()`。
 - 权限仍是 `requireSecretaryGeneral()`（`hasRole('secretary_general')`），失败 403。
 
-### 4.4 `api/v1/countries.php` —— 只改了一处写入
+### 4.4 `api/v1/countries.php` —— 一处写入 + 一处字段白名单
 
-- 唯一的改动在 `deleteCountry()`：删除邦国前解绑成员，语句由
+- `deleteCountry()`：删除邦国前解绑成员，语句由
   `UPDATE users SET country_id = NULL WHERE country_id = ?`
   改为 **`UPDATE passport_accounts SET country_id = NULL WHERE country_id = ?`**
   （注释说明：该字段是权威接口的本地缓存，下次同步会自动回填）。
+- `getCountry()`：成员查询由 `SELECT u.* FROM users u WHERE u.country_id = ?` 改为**显式字段白名单**
+  `SELECT u.id, u.username, u.game_id, u.country_id, u.role, u.jhtuid, u.level, u.created_at`。
+  原因：`users` 是只读兼容视图，`SELECT u.*` 会随着视图列的变化把新列（历史上就包括密码哈希）
+  顺手带出去；白名单能保证日后视图新增敏感列时也不会外泄。
 - 其余查询**保持原样**，仍通过 `users` 视图读数据：
-  `getCountries()` / `getCountry()` / `getAllCountriesAdmin()` 的
-  `LEFT JOIN users u ON c.id = u.country_id` 与 `SELECT u.* FROM users u WHERE u.country_id = ?`。
-- `getCountry()` 返回的 `members` 数组元素来自视图，列名是 `game_id` / `jhtuid` / `level` 等旧名。
+  `getCountries()` / `getAllCountriesAdmin()` 的 `LEFT JOIN users u ON c.id = u.country_id` 未改动。
+- `getCountry()` 返回的 `members` 数组元素来自视图，列名仍是 `game_id` / `jhtuid` / `level` 等旧名，
+  但**不再包含**白名单之外的列（`password` / `email` / `status` / `last_login_at` 都不会再返回）。
 
 ### 4.5 `api/v1/server.php` —— 在线玩家列表改读通行证
 
@@ -365,7 +376,7 @@ mysql -u root -p < 8w_passport.rendered.sql
 | 1 | `online_players` 表 | 保留结构，**新代码不再写入**；在线口径已改为 `passport_sessions.last_seen_at` | 无（`api/v1/public/stats.php` 已改口径） | 确认全仓库无 `INSERT/UPDATE online_players`（现有引用只剩 `MCServerPing.php` / `server.php` 里同名的**响应字段**，与表无关） | 从 `database/8w_passport.sql` 删除建表段 → `DROP TABLE online_players;` |
 | 2 | `api_keys` 表 | 保留，静态 API Key 仍在生效 | `php/classes/ApiAuth.php`、`api-manager.php`、`api/v1/admin/api-keys.php`、`api/v1/public/*.php`（`X-API-Key` 鉴权） | 把 `api/v1/public/*` 迁到 OAuth 2.0（`client_credentials` + `directory` scope），并通知所有存量 Key 持有者换用 `client_id` / `client_secret` | 停用 `api-manager.php` 与 `api/v1/admin/api-keys.php` → 删除 `ApiAuth` → `DROP TABLE api_keys;` |
 | 3 | `api_logs` 表 | 保留，旧 API 仍在写 | `php/classes/ApiLogger.php`（`INSERT INTO api_logs …`）、`php/classes/ApiAuth.php`（按 `api_logs` 做限流计数） | 同第 2 项（旧 Key 体系整体下线）；新的调用日志已在 `passport_api_logs` | 删除 `ApiLogger` → `DROP TABLE api_logs;` |
-| 4 | `users` 视图 | 保留，只读兼容层 | 读：`api/v1/cases.php`、`api/v1/conventions.php`、`api/v1/countries.php`、`api/v1/news.php`、`api/v1/proposals.php`、`api/v1/trades.php`、`api/v1/public/countries.php`、`api/v1/public/users.php`、`api/v1/public/stats.php`、`php/render_functions.php` | 把上述文件的 `JOIN users` 全部改写为 `JOIN passport_accounts`，并把取出的列名从 `game_id` / `jhtuid` / `level` / `password` 改为 `player_name` / `simpass_uid` / `simpass_level` / `password_hash` | 从 `database/8w_passport.sql` 删除 `DROP VIEW` + `CREATE VIEW` 段 → `DROP VIEW users;` |
+| 4 | `users` 视图 | 保留，只读兼容层 | 读：`api/v1/cases.php`、`api/v1/conventions.php`、`api/v1/countries.php`、`api/v1/news.php`、`api/v1/proposals.php`、`api/v1/trades.php`、`api/v1/public/countries.php`、`api/v1/public/users.php`、`api/v1/public/stats.php`、`php/render_functions.php` | 把上述文件的 `JOIN users` 全部改写为 `JOIN passport_accounts`，并把取出的列名从 `game_id` / `jhtuid` / `level` 改为 `player_name` / `simpass_uid` / `simpass_level`（视图本来就没有密码列；需要校验密码的代码直接读 `passport_accounts.password_hash`，不要依赖兼容层） | 从 `database/8w_passport.sql` 删除 `DROP VIEW` + `CREATE VIEW` 段 → `DROP VIEW users;` |
 | 5 | `Auth` 兼容类（`php/classes/Auth.php`） | 保留，旧方法签名齐备 | `api/v1/auth.php`、`api/v1/users.php`、`api/v1/countries.php`（`new Auth($db)`）、`php/config.php` 的自动加载器 | 上述接口全部改为直接使用 `passport/src/` 的服务或通行证 HTTP 接口 | 删除 `php/classes/Auth.php`，并清理 `$_SESSION['user']` 相关读取（`php/config.php` 的 `hasPermission()` 等） |
 
 **移除顺序建议**：4 → 5 → 2 → 3 → 1（先做纯读改写，风险最低；再动鉴权体系；最后清理无引用的表）。
