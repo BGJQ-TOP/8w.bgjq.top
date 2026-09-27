@@ -47,15 +47,3 @@ if (!function_exists('w8_guard')) {
         throw ApiException::unauthorized('请先登录通行证，或携带有效的 Bearer 访问令牌');
     }
 }
-
-if (!function_exists('w8_require_post')) {
-    /**
-     * @throws ApiException
-     */
-    function w8_require_post(Request $request)
-    {
-        if (!$request->isPost()) {
-            throw ApiException::validation('该接口只接受 POST 请求');
-        }
-    }
-}

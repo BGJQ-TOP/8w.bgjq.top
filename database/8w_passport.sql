@@ -609,13 +609,16 @@ CREATE TABLE IF NOT EXISTS `api_logs` (
 --  5.4 users 视图 —— 旧代码的只读兼容层
 --      旧接口文件里大量 `LEFT JOIN users u ON ... = u.id` 保持可用。
 --      身份的唯一真源是 passport_accounts；写入请走通行证 API。
+--
+--      ⚠ 刻意**不**暴露 password_hash：视图一旦带上密码哈希，
+--        任何 `SELECT u.*` 的旧查询都会把它顺手返回给前端。
+--        需要校验密码的代码一律走 passport/src（读 passport_accounts 本体）。
 -- ----------------------------------------------------------------------------
 DROP VIEW IF EXISTS `users`;
 CREATE VIEW `users` AS
 SELECT
     `id`                AS `id`,
     `username`          AS `username`,
-    `password_hash`     AS `password`,
     `player_name`       AS `game_id`,
     `player_id`         AS `player_id`,
     `country_id`        AS `country_id`,

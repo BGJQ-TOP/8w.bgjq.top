@@ -211,7 +211,7 @@ final class EmailCodeService
         );
 
         if ($sentInLastHour >= self::HOURLY_LIMIT) {
-            throw ApiException::rateLimited('该邮箱今日发送次数过多，请稍后再试');
+            throw ApiException::rateLimited('该邮箱一小时内发送次数过多，请稍后再试');
         }
     }
 

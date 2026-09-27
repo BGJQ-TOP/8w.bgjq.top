@@ -158,7 +158,7 @@ class Auth
     public function getUserByUsername($username)
     {
         $account = $this->app->accounts()->findByUsername((string) $username);
-        return $account === null ? null : $this->toLegacyUser($account, true);
+        return $account === null ? null : $this->toLegacyUser($account);
     }
 
     /**
@@ -170,7 +170,7 @@ class Auth
     public function getUserById($id)
     {
         $account = $this->app->accounts()->find((int) $id);
-        return $account === null ? null : $this->toLegacyUser($account, true);
+        return $account === null ? null : $this->toLegacyUser($account);
     }
 
     /**
@@ -373,13 +373,18 @@ class Auth
     }
 
     /**
+     * 转成旧代码期望的字段形状
+     *
+     * ⚠ 刻意不返回密码哈希：这个数组会直接被 jsonSuccess 序列化给前端，
+     *   带上哈希等于把全站账号的密码哈希送到浏览器。需要校验密码请用
+     *   passport/src 里的 Account::passwordHash()。
+     *
      * @param Account $account
-     * @param bool $includeSecret 是否包含密码哈希（仅后台管理用）
      * @return array<string,mixed>
      */
-    private function toLegacyUser(Account $account, $includeSecret = false)
+    private function toLegacyUser(Account $account)
     {
-        $user = array(
+        return array(
             'id'          => $account->id(),
             'username'    => $account->username(),
             'email'       => $account->email(),
@@ -392,12 +397,6 @@ class Auth
             'level'       => $account->simpassLevel(),
             'created_at'  => $account->createdAt(),
         );
-
-        if ($includeSecret) {
-            $user['password'] = $account->passwordHash();
-        }
-
-        return $user;
     }
 
     /**

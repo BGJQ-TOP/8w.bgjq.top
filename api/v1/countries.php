@@ -41,9 +41,12 @@ function getCountry($db, $id) {
         jsonError('邦国不存在', 404);
     }
     
+    // 显式列出字段而不是 SELECT u.*：users 是只读兼容视图，
+    // 白名单能保证日后视图新增敏感列时也不会被顺手带出去。
     $stmt = $db->prepare("
-        SELECT u.* 
-        FROM users u 
+        SELECT u.id, u.username, u.game_id, u.country_id, u.role,
+               u.jhtuid, u.level, u.created_at
+        FROM users u
         WHERE u.country_id = ?
         ORDER BY u.username
     ");

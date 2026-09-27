@@ -272,6 +272,11 @@ checkSame('OAuth 错误结构符合 RFC 6749', 'invalid_grant', $oauthErr->paylo
 checkSame('OAuth 错误描述', '授权码无效', $oauthErr->payload()['error_description']);
 check('OAuth 错误响应禁止缓存', $oauthErr->payload() !== null);
 
+// RFC 7009 吊销端点：空响应体必须是 {} 而不是 []，否则客户端会误判成列表
+$empty = Response::emptyBody();
+checkSame('空响应体状态码 200', 200, $empty->status());
+checkSame('空响应体序列化为 {} 而不是 []', '{}', json_encode($empty->payload()));
+
 $ex = ApiException::validation('字段错误', array('field' => 'username'));
 checkSame('validation 错误码', 'invalid_request', $ex->errorCode());
 checkSame('validation HTTP 状态', 422, $ex->httpStatus());
@@ -372,6 +377,24 @@ if (is_file($sqlPath)) {
     checkSame('全部 ' . count($requiredTables) . ' 张表均已定义', array(), $missing);
 
     check('定义了 users 只读兼容视图', strpos($sql, 'CREATE VIEW `users` AS') !== false);
+
+    // 关键回归防线：视图绝不能暴露密码哈希。
+    // 只要视图里有 password 列，任何旧的 `SELECT u.*` 都会把它送到前端。
+    preg_match('/CREATE VIEW `users` AS(.*?);/s', $sql, $viewMatch);
+    if (isset($viewMatch[1])) {
+        $viewBody = $viewMatch[1];
+        check(
+            'users 视图不暴露 password_hash',
+            strpos($viewBody, 'password_hash') === false
+                && preg_match('/AS\s+`password`/', $viewBody) !== 1,
+            '视图定义中出现了 password_hash'
+        );
+        foreach (array('id', 'username', 'game_id', 'country_id', 'role', 'jhtuid', 'level', 'created_at') as $column) {
+            check("users 视图仍提供 {$column}（旧代码依赖）", strpos($viewBody, "AS `{$column}`") !== false);
+        }
+    } else {
+        check('能解析 users 视图定义', false);
+    }
 
     // 规格要求：玩家只保留三个字段
     preg_match('/CREATE TABLE IF NOT EXISTS `players` \((.*?)\n\) ENGINE/s', $sql, $m);

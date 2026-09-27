@@ -39,8 +39,8 @@ Endpoint::run(function (Request $request, Application $app) {
     // fresh=1 强制回源。默认允许，但目录层自身有 TTL 与降级保护，不会打爆第三方。
     $fresh = $request->bool('fresh', false);
 
-    $cachedBefore = $app->players()->findCached($playerName);
-    $player = $app->players()->find($playerName, $fresh);
+    $servedFromCache = false;
+    $player = $app->players()->find($playerName, $fresh, $servedFromCache);
 
     if ($player === null) {
         throw ApiException::notFound('游戏内不存在名为「' . $playerName . '」的玩家');
@@ -48,7 +48,8 @@ Endpoint::run(function (Request $request, Application $app) {
 
     $data = array(
         'player' => $player->toArray(),
-        'source' => ($cachedBefore !== null && !$fresh) ? 'cache' : 'authoritative',
+        // 如实反映数据来源：回源失败而降级用旧缓存时同样标 cache，不冒充权威结果
+        'source' => $servedFromCache ? 'cache' : 'authoritative',
     );
 
     // 顺带把所属邦国的缓存信息带上，第三方一次请求就能拿全

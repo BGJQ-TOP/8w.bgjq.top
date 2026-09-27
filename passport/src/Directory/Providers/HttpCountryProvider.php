@@ -25,6 +25,7 @@ use W8\Passport\Support\Logger;
  *    COUNTRY_API_TOKEN             可选 Bearer
  *    COUNTRY_API_TIMEOUT           超时秒数，默认 8
  *    COUNTRY_API_SUCCESS_FIELD     可选，成功标志字段路径
+ *    COUNTRY_API_ID_FIELD          邦国ID字段路径（可多个候选，逗号分隔）
  *    COUNTRY_API_NAME_FIELD        邦国名称字段路径（可多个候选，逗号分隔）
  *    COUNTRY_API_DECLARATION_FIELD 邦国宣言字段路径
  *    COUNTRY_API_TERRITORY_FIELD   邦国领土大小字段路径

@@ -20,7 +20,7 @@ final class Scope
         'player'         => '游戏内玩家名、玩家ID、所属邦国ID',
         'country'        => '所属邦国ID（与 player 重复，供只关心邦国的应用使用）',
         'simpass'        => '简幻通ID与等级',
-        'offline_access' => '允许通过 refresh_token 长期续期',
+        'offline_access' => '刷新令牌到期后仍可继续换取新的刷新令牌（不申请则只能刷新一次）',
         'directory'      => '查询游戏内玩家与邦国公开信息（机器对机器）',
     );
 

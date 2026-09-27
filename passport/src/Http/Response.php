@@ -15,17 +15,18 @@ final class Response
     /** @var int */
     private $status;
 
-    /** @var array<string,mixed> */
+    /** @var mixed */
     private $payload;
 
     /** @var array<string,string> */
     private $headers;
 
     /**
-     * @param array<string,mixed> $payload
+     * @param int $status
+     * @param mixed $payload
      * @param array<string,string> $headers
      */
-    public function __construct($status, array $payload, array $headers = array())
+    public function __construct($status, $payload, array $headers = array())
     {
         $this->status = (int) $status;
         $this->payload = $payload;
@@ -40,6 +41,19 @@ final class Response
     public static function ok($data = null, $headers = array())
     {
         return new self(200, array('ok' => true, 'data' => $data), $headers);
+    }
+
+    /**
+     * 空响应体（RFC 7009 令牌吊销端点用）
+     *
+     * 输出 `{}` 而不是 `[]` —— 后者容易被客户端误判成"列表"。
+     *
+     * @param int $status
+     * @return Response
+     */
+    public static function emptyBody($status = 200)
+    {
+        return new self($status, (object) array(), array('Cache-Control' => 'no-store'));
     }
 
     /**
@@ -78,7 +92,7 @@ final class Response
     }
 
     /**
-     * @return array<string,mixed>
+     * @return mixed
      */
     public function payload()
     {

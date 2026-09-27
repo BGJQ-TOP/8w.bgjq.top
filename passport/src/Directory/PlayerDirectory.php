@@ -54,10 +54,13 @@ final class PlayerDirectory
      *
      * @param string $playerName
      * @param bool $fresh 强制回源（注册校验必须用 true）
+     * @param bool|null $servedFromCache 出参：结果是否来自本地缓存（含降级场景）
      * @return PlayerProfile|null
      */
-    public function find($playerName, $fresh = false)
+    public function find($playerName, $fresh = false, &$servedFromCache = null)
     {
+        $servedFromCache = false;
+
         $playerName = trim((string) $playerName);
         if ($playerName === '') {
             return null;
@@ -67,12 +70,14 @@ final class PlayerDirectory
         $cached = $row === null ? null : PlayerProfile::fromRow($row);
 
         if (!$fresh && $cached !== null && !$this->rowIsStale($row)) {
+            $servedFromCache = true;
             return $cached;
         }
 
         // 权威源未接入时，有缓存就先用缓存（保证已上线功能不被配置拖垮）
         if (!$this->provider->isConfigured()) {
             if ($cached !== null) {
+                $servedFromCache = true;
                 return $cached;
             }
             throw ApiException::notImplemented(
@@ -87,6 +92,7 @@ final class PlayerDirectory
                 $this->logger->warning('player_directory.degraded', array(
                     'player' => $playerName, 'reason' => $e->getMessage(),
                 ));
+                $servedFromCache = true;
                 return $cached;
             }
             throw $e;

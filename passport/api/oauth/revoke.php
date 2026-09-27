@@ -21,5 +21,7 @@ Endpoint::run(function (Request $request, Application $app) {
 
     $app->oauth()->revoke($request);
 
-    return new Response(200, array(), array('Cache-Control' => 'no-store'));
+    // RFC 7009：成功时返回 200，响应体无要求。这里给一个空对象，
+    // 避免客户端把 json_encode([]) 得到的 `[]` 误当成列表。
+    return Response::emptyBody(200);
 });

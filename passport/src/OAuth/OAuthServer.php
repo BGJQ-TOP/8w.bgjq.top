@@ -256,7 +256,10 @@ final class OAuthServer
     public function issueToken(Request $request)
     {
         $grantType = $request->string('grant_type');
-        $client = $this->authenticateClient($request, $grantType === 'authorization_code' || $grantType === 'refresh_token');
+        $allowPublic = $grantType === 'authorization_code' || $grantType === 'refresh_token';
+
+        // 令牌端点是 RFC 6749 协议端点，错误必须走 OAuth 错误格式
+        $client = $this->authenticateClient($request, $allowPublic, true);
 
         switch ($grantType) {
             case 'authorization_code':
@@ -275,10 +278,11 @@ final class OAuthServer
      *
      * @param Request $request
      * @param bool $allowPublic 公开客户端（PKCE）是否允许不带密钥
+     * @param bool $oauthStyle 错误是否按 RFC 6749 的 {"error":...} 格式返回
      * @return array<string,mixed>
      * @throws ApiException
      */
-    public function authenticateClient(Request $request, $allowPublic = false)
+    public function authenticateClient(Request $request, $allowPublic = false, $oauthStyle = false)
     {
         $clientId = $request->string('client_id');
         $clientSecret = $request->string('client_secret');
@@ -309,7 +313,7 @@ final class OAuthServer
             throw ApiException::oauth('unauthorized_client', '公开客户端不允许使用该 grant_type', 401);
         }
 
-        $this->assertRateLimit($client);
+        $this->assertRateLimit($client, $oauthStyle);
 
         return $client;
     }
@@ -576,10 +580,13 @@ final class OAuthServer
     }
 
     /**
+     * 限流
+     *
      * @param array<string,mixed> $client
+     * @param bool $oauthStyle 是否按 RFC 6749 错误格式抛出
      * @throws ApiException
      */
-    private function assertRateLimit(array $client)
+    private function assertRateLimit(array $client, $oauthStyle = false)
     {
         $limit = (int) $client['rate_limit'];
         if ($limit <= 0) {
@@ -588,7 +595,14 @@ final class OAuthServer
 
         $used = $this->clients->callsInLastMinute($client['client_id']);
         if ($used >= $limit) {
-            throw ApiException::rateLimited('该应用调用频率超限（每分钟 ' . $limit . ' 次）');
+            $message = '该应用调用频率超限（每分钟 ' . $limit . ' 次）';
+
+            if ($oauthStyle) {
+                // 令牌端点必须返回 {"error":...}，否则第三方 SDK 无法按协议解析
+                throw ApiException::oauth('temporarily_unavailable', $message, 429);
+            }
+
+            throw ApiException::rateLimited($message);
         }
     }
 }
