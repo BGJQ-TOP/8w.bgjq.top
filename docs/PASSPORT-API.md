@@ -16,11 +16,10 @@
 7. [用户信息 GET /oauth/userinfo](#七用户信息-get-oauthuserinfo)
 8. [令牌内省 POST /oauth/introspect](#八令牌内省-post-oauthintrospect)
 9. [令牌吊销 POST /oauth/revoke](#九令牌吊销-post-oauthrevoke)
-10. [数据查询接口](#十数据查询接口)
+10. [数据查询接口](#十数据查询接口)（含 [10.3 绑定管理](#103-绑定管理-passportapiv1bindings)）
 11. [错误码表](#十一错误码表)
 12. [限流](#十二限流)
 13. [可直接运行的示例](#十三可直接运行的示例)
-
 ---
 
 ## 一、概述
@@ -57,7 +56,10 @@ https://8w.bgjq.top
 | POST | `/oauth/revoke` | 令牌吊销（需机密客户端认证） |
 | GET | `/passport/api/v1/player` | 查询游戏内玩家 |
 | GET | `/passport/api/v1/country` | 查询邦国 |
-| GET | `/passport/api/v1/me` | 当前通行证（需通行证会话 Cookie，非第三方接口） |
+| POST | `/passport/api/v1/register` | 注册通行证（无需登录，成功即建立登录态） |
+| POST | `/passport/api/v1/email-code` | 下发邮箱验证码 |
+| GET | `/passport/api/v1/me` | 当前通行证 + 绑定全景（需通行证会话 Cookie，非第三方接口） |
+| GET / POST / DELETE | `/passport/api/v1/bindings` | 绑定管理：列出 / 绑定 / 解绑（需通行证会话 Cookie） |
 | GET / DELETE | `/passport/api/v1/authorized-apps` | 列出 / 撤销授权（需通行证会话 Cookie） |
 | GET / POST / DELETE | `/passport/api/oauth/clients` | 第三方应用管理（需管理员通行证会话 Cookie） |
 
@@ -126,10 +128,11 @@ scope 由 `passport/src/OAuth/Scope.php` 的 `MAP` 常量唯一定义，逐条�
 | scope | 含义（源码原文） |
 | --- | --- |
 | `basic` | 通行证UID、用户名、站内角色 |
-| `email` | 验证邮箱与邮箱验证状态 |
+| `email` | 验证邮箱与邮箱验证状态（未绑定时不返回该字段） |
 | `player` | 游戏内玩家名、玩家ID、所属邦国ID |
 | `country` | 所属邦国ID（与 player 重复，供只关心邦国的应用使用） |
 | `simpass` | 简幻通ID与等级 |
+| `fanverify` | FanVerify 账号ID（未绑定时不返回该字段） |
 | `offline_access` | 刷新令牌到期后仍可继续换取新的刷新令牌（不申请则只能刷新一次） |
 | `directory` | 查询游戏内玩家与邦国公开信息（机器对机器） |
 
@@ -142,6 +145,9 @@ scope 由 `passport/src/OAuth/Scope.php` 的 `MAP` 常量唯一定义，逐条�
 - **机器对机器允许的 scope 只有 `directory`**（`Scope::MACHINE_SCOPES`），
   `client_credentials` 拿不到任何用户身份数据。
 - 刷新令牌时**只允许缩小 scope，不允许扩大**。
+- ⚠ **`email` 与 `fanverify` 对应的是可选绑定**：用户完全可以不绑，此时对应字段在 userinfo 里
+  **整块省略**（不是返回 `null`）。申请了这两个 scope 不等于一定能拿到值，客户端必须按
+  "字段存在即已绑定、字段缺失即未绑定" 来判断。
 
 ---
 
@@ -351,6 +357,9 @@ Authorization: Bearer <access_token>
     "simpass": {
       "uid": 10086,
       "level": 3
+    },
+    "fanverify": {
+      "uid": 555
     }
   }
 }
@@ -361,14 +370,23 @@ Authorization: Bearer <access_token>
 | `sub` | 无（总是返回） | string | 通行证 UID，等于 `passport_accounts.id` |
 | `username` | `basic` | string | 通行证用户名 |
 | `role` | `basic` | string | 站内角色：`observer` / `diplomat` / `peacekeeper` / `permanent_member` / `secretary_general` |
-| `email` | `email` | string | 验证邮箱 |
-| `email_verified` | `email` | bool | 邮箱是否已验证（`email_verified_at` 非 NULL） |
+| `email` | `email` | string | 验证邮箱。**未绑定时整个字段省略** |
+| `email_verified` | `email` | bool | 邮箱是否已验证（`email_verified_at` 非 NULL）。**未绑定时整个字段省略** |
 | `player.player_name` | `player` | string | 游戏内玩家名（权威主键） |
 | `player.player_id` | `player` | int \| null | 游戏内玩家 ID（权威缓存） |
 | `player.country_id` | `player` | int \| null | 所属邦国 ID（权威缓存） |
 | `country_id` | `country` | int \| null | 所属邦国 ID（与 `player.country_id` 同值） |
 | `simpass.uid` | `simpass` | int \| null | 简幻通 ID |
 | `simpass.level` | `simpass` | int \| null | 简幻通等级 |
+| `fanverify.uid` | `fanverify` | int | FanVerify 账号ID。**未绑定时整个 `fanverify` 块省略** |
+
+> ⚠ **「未绑定」的表示方式是"字段不存在"，而不是"字段为 `null`"。**
+> `email` / `email_verified` 与整个 `fanverify` 块都遵循这条规则：
+> 申请了 scope 但用户没绑，返回体里就**没有**这些键。这样客户端拿到的是明确信号
+> （"该用户没有绑定"），不用去猜 `null` 到底是"没绑"还是"接口没返回"。
+>
+> 与之相对，`player.player_id` / `player.country_id` / `simpass.*` 是**必填绑定**或权威缓存，
+> 键始终存在，值可能为 `null`。
 
 `offline_access` 与 `directory` 不改变 userinfo 的输出内容。
 
@@ -568,6 +586,112 @@ Authorization: Bearer <access_token>
 - 邦国接口未接入且本地无缓存 → 501 `not_implemented`；
 - 只配了按 ID 查询的路径模板（未配 `COUNTRY_API_PATH_BY_NAME`）时用 `name` 查询 → 501
   「邦国信息接口未提供按名称查询，请使用邦国ID，或配置 COUNTRY_API_PATH_BY_NAME」。
+
+---
+
+### 10.3 绑定管理 `/passport/api/v1/bindings`
+
+> ⚠ **这是第一方接口，不是第三方接入接口。**
+> 鉴权走**通行证会话 Cookie**（`Authenticator::requireCurrent()`），不接受 Bearer 令牌。
+> 它是 `/passport/` 页面「绑定管理」卡片的后端，第三方应用无法调用。
+
+通行证上的绑定分两类：
+
+| 类别 | 绑定 | `bindable` | 说明 |
+| --- | --- | --- | --- |
+| 必填 | 游戏内玩家名 | `false` | 权威身份主键，注册时经权威接口实时校验 |
+| 必填 | 简幻通ID | `false` | 注册时校验通过，同时是默认的账号找回通道 |
+| 可选 | 验证邮箱 | `true` | 用户自己决定绑不绑，随时可绑可解 |
+| 可选 | FanVerify 账号 | `true` | 同上 |
+
+#### 列出全部绑定
+
+```http
+GET /passport/api/v1/bindings
+```
+
+```json
+{
+  "ok": true,
+  "data": {
+    "bindings": {
+      "player":    { "label": "游戏内玩家名", "bound": true,  "required": true,  "bindable": false, "value": "LouieMAIN", "detail": "玩家ID 1001" },
+      "simpass":   { "label": "简幻通",       "bound": true,  "required": true,  "bindable": false, "value": 10086,      "detail": "等级 3" },
+      "email":     { "label": "验证邮箱",     "bound": false, "required": false, "bindable": true,  "available": true,  "value": null, "detail": null },
+      "fanverify": { "label": "FanVerify",    "bound": false, "required": false, "bindable": true,  "available": false, "value": null, "detail": null }
+    },
+    "account": { "...": "见 GET /passport/api/v1/me" }
+  }
+}
+```
+
+- `bound` —— 是否已绑定；
+- `required` —— 是否必填（必填项 `bindable` 恒为 `false`）；
+- `available` —— **仅两个可选绑定有**，表示对应的外部接口是否已接入。为 `false` 时前端应禁用绑定按钮
+  并说明原因（如「接口待接入」），而不是让用户白点一次。判定依据分别是
+  `EmailCodeService::isDeliverable()`（即 `EMAIL_API_URL`）与 `FanVerifyVerifier::isConfigured()`（即 `FANVERIFY_API_URL`）。
+
+`GET /passport/api/v1/me` 也会返回同一份 `bindings`。
+
+#### 绑定
+
+```http
+POST /passport/api/v1/bindings
+Content-Type: application/json
+
+{ "type": "email",     "email": "you@example.com", "code": "123456", "password": "当前密码" }
+{ "type": "fanverify", "uid": 10086,               "code": "654321", "password": "当前密码" }
+```
+
+绑定邮箱前需先调用 `POST /passport/api/v1/email-code` 并传 `scene: "bind"` 获取验证码。
+
+成功返回：
+
+```json
+{
+  "ok": true,
+  "data": {
+    "bound": "email",
+    "bindings": { "...": "最新的绑定全景" },
+    "account": { "...": "最新的账号信息" }
+  }
+}
+```
+
+#### 解绑
+
+```http
+DELETE /passport/api/v1/bindings
+Content-Type: application/json
+
+{ "type": "email", "password": "当前密码" }
+```
+
+`type` 也可以放在查询串上（无敏感性）；**`password` 只从请求体读取** ——
+放进 URL 会被 Web 服务器访问日志、浏览器历史与 `Referer` 记录下来。
+
+成功返回 `{"ok":true,"data":{"unbound":"email","bindings":{...},"account":{...}}}`。
+
+#### 安全约定
+
+**绑定与解绑都要求提供当前密码**，缺失或错误一律返回 422 `invalid_request`「当前密码不正确」。
+
+原因：绑定会改变账号的找回途径。若只凭登录态就能绑邮箱，一个被盗用的会话就能把攻击者的邮箱挂到
+受害者账号上，再走找回流程彻底夺走账号；解绑同理。要求当前密码等于强制「这是本人操作」。
+
+#### 失败情形
+
+| 情形 | 状态码 | 错误码 |
+| --- | --- | --- |
+| 未登录 | 401 | `unauthorized` |
+| `type` 不是 `email` / `fanverify` | 422 | `invalid_request` |
+| 密码缺失或错误 | 422 | `invalid_request` |
+| 邮箱格式不正确 / 邮箱验证码错误 | 422 | `invalid_request` |
+| FanVerify 账号ID 非法 / 验证码为空 | 422 | `invalid_request` |
+| 该邮箱 / FanVerify 已被其它通行证绑定 | 409 | `conflict` |
+| 重复绑定同一个值 | 409 | `conflict` |
+| 解绑一个本来就没绑定的项 | 409 | `conflict` |
+| 对应外部接口未接入（邮箱或 FanVerify） | 501 | `not_implemented` |
 
 ---
 

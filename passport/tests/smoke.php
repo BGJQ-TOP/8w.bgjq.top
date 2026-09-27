@@ -40,6 +40,7 @@ use W8\Passport\OAuth\OAuthServer;
 use W8\Passport\OAuth\Scope;
 use W8\Passport\Support\Arr;
 use W8\Passport\Support\Config;
+use W8\Passport\Support\Database;
 use W8\Passport\Support\HttpClient;
 use W8\Passport\Support\HttpResponse;
 use W8\Passport\Support\Logger;
@@ -600,6 +601,102 @@ check('reset 后 instance() 会自动重新装配', Application::instance() inst
 // 恢复到默认装配，避免影响后续用例
 Application::reset();
 Application::boot(new Config(W8_PASSPORT_ROOT, array('DB_NAME' => 'bgjq8w', 'DB_USER' => 'bgjq8w', 'DB_PASS' => 'x')));
+
+// ============================================================================
+
+section('Identity\\BindingService —— 绑定规则（不需要数据库的部分）');
+
+// BindingService 的构造只保存依赖；describe() 与密码校验都不碰数据库，
+// 因此可以在没有 MySQL 的环境下验证核心规则与顺序。
+$bindingApp = Application::instance();
+$bindingDb = new Database($bindingApp->config(), $bindingApp->logger());
+$bindingService = new BindingService(
+    new AccountRepository($bindingDb),
+    new EmailCodeService($bindingDb, new UnavailableEmailVerifier(), $bindingApp->config(), $bindingApp->logger()),
+    new UnavailableFanVerifyVerifier(),
+    $bindingApp->logger()
+);
+
+$bindAccount = Account::fromRow(array(
+    'id' => 9,
+    'username' => 'binder',
+    'email' => null,
+    'email_verified_at' => null,
+    'password_hash' => password_hash('correct-horse', PASSWORD_DEFAULT),
+    'role' => 'observer',
+    'status' => 1,
+    'player_name' => 'Binder',
+    'player_id' => 1,
+    'country_id' => null,
+    'simpass_uid' => 4242,
+    'simpass_level' => null,
+    'fanverify_uid' => null,
+    'created_at' => '2026-01-01 00:00:00',
+));
+
+$described = $bindingService->describe($bindAccount);
+checkSame('describe 覆盖四种绑定', array('player', 'simpass', 'email', 'fanverify'), array_keys($described));
+check('玩家是必填且不可解绑', $described['player']['required'] === true && $described['player']['bindable'] === false);
+check('简幻通是必填且不可解绑', $described['simpass']['required'] === true && $described['simpass']['bindable'] === false);
+check('邮箱可选且可绑可解', $described['email']['required'] === false && $described['email']['bindable'] === true);
+check('FanVerify 可选且可绑可解', $described['fanverify']['required'] === false && $described['fanverify']['bindable'] === true);
+check('邮箱接口未接入时 available 为 false', $described['email']['available'] === false);
+check('FanVerify 接口未接入时 available 为 false', $described['fanverify']['available'] === false);
+check('未绑定的邮箱 bound 为 false', $described['email']['bound'] === false);
+check('已绑定的玩家 bound 为 true', $described['player']['bound'] === true);
+checkSame('绑定类型常量与端点一致', array('email', 'fanverify'), array(BindingService::TYPE_EMAIL, BindingService::TYPE_FANVERIFY));
+
+// 密码校验必须发生在一切业务校验之前 —— 否则密码错误的人也能靠报错差异探测绑定状态
+checkThrows('绑定邮箱：密码为空 -> 422', function () use ($bindingService, $bindAccount) {
+    $bindingService->bindEmail($bindAccount, 'a@b.com', '123456', '');
+}, 'invalid_request');
+
+checkThrows('绑定邮箱：密码错误 -> 422', function () use ($bindingService, $bindAccount) {
+    $bindingService->bindEmail($bindAccount, 'a@b.com', '123456', 'wrong-password');
+}, 'invalid_request');
+
+checkThrows('解绑邮箱：密码错误 -> 422（不会先暴露"没绑定"）', function () use ($bindingService, $bindAccount) {
+    $bindingService->unbindEmail($bindAccount, 'wrong-password');
+}, 'invalid_request');
+
+checkThrows('解绑 FanVerify：密码错误 -> 422', function () use ($bindingService, $bindAccount) {
+    $bindingService->unbindFanVerify($bindAccount, 'wrong-password');
+}, 'invalid_request');
+
+checkThrows('绑定 FanVerify：密码错误 -> 422', function () use ($bindingService, $bindAccount) {
+    $bindingService->bindFanVerify($bindAccount, 555, '123456', 'wrong-password');
+}, 'invalid_request');
+
+// 密码正确后才轮到业务校验
+checkThrows('密码正确但邮箱格式不对 -> 422', function () use ($bindingService, $bindAccount) {
+    $bindingService->bindEmail($bindAccount, 'not-an-email', '123456', 'correct-horse');
+}, 'invalid_request');
+
+checkThrows('密码正确但邮箱为空 -> 422', function () use ($bindingService, $bindAccount) {
+    $bindingService->bindEmail($bindAccount, '', '123456', 'correct-horse');
+}, 'invalid_request');
+
+checkThrows('未绑定邮箱时解绑 -> 409', function () use ($bindingService, $bindAccount) {
+    $bindingService->unbindEmail($bindAccount, 'correct-horse');
+}, 'conflict');
+
+checkThrows('未绑定 FanVerify 时解绑 -> 409', function () use ($bindingService, $bindAccount) {
+    $bindingService->unbindFanVerify($bindAccount, 'correct-horse');
+}, 'conflict');
+
+checkThrows('绑定 FanVerify：ID 非法 -> 422', function () use ($bindingService, $bindAccount) {
+    $bindingService->bindFanVerify($bindAccount, 0, '123456', 'correct-horse');
+}, 'invalid_request');
+
+checkThrows('绑定 FanVerify：验证码为空 -> 422', function () use ($bindingService, $bindAccount) {
+    $bindingService->bindFanVerify($bindAccount, 555, '', 'correct-horse');
+}, 'invalid_request');
+
+// 已绑定 FanVerify 的账号再绑同一个 ID，应在调用外部接口之前就被拦下
+$alreadyBound = Account::fromRow(array_merge($bindAccount->raw(), array('fanverify_uid' => 555)));
+checkThrows('重复绑定同一个 FanVerify -> 409', function () use ($bindingService, $alreadyBound) {
+    $bindingService->bindFanVerify($alreadyBound, 555, '123456', 'correct-horse');
+}, 'conflict');
 
 // ============================================================================
 

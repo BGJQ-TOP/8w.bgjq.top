@@ -10,7 +10,7 @@
 8W通行证是 8W社区的统一身份服务：**一次注册，全站通用**。
 
 - 身份主体是 `passport_accounts` 表里的一行，其 `id` 就是对外唯一的通行证 UID，也是 OAuth 2.0 的 `sub`。
-- 一个通行证同时绑定三样东西：验证邮箱、游戏内玩家名、简幻通身份。
+- 一个通行证上的绑定分两类：**必填且不可解绑**的游戏内玩家名与简幻通身份，**可选**的验证邮箱与 FanVerify 账号。
 - 第三方应用不碰数据库，只能通过 OAuth 2.0 消费通行证；通行证自己也不直接读社区业务表。
 
 ### 为什么独立成子系统
@@ -20,7 +20,7 @@
 | 身份是全局资产 | 主站、第三方应用、将来的其他子站都引用同一份 `passport_accounts.id`，不能再散落在 `users` 表里 |
 | 第三方接入需要标准协议 | OAuth 2.0 授权码 + PKCE / 刷新令牌 / 客户端凭据，由 `src/OAuth/` 独立承载（RFC 6749 / 7636 / 7009 / 7662） |
 | 权威数据来自游戏服务器 | 玩家名与邦国 ID 的权威方是第三方游戏服务，本地只做缓存，缓存策略必须集中一处（`src/Directory/`） |
-| 外部接口还没全部到位 | 邮箱、玩家、邦国、简幻通四个接口都可能没接入，必须做到「未接入就明确报错，绝不静默放行」 |
+| 外部接口还没全部到位 | 玩家、邦国、简幻通、邮箱、FanVerify 五个接口都可能没接入，必须做到「未接入就明确报错，绝不静默放行」；其中邮箱与 FanVerify 是**可选绑定**，未接入不会挡住注册 |
 | 便于测试 | 无 Composer / 无框架，纯 PSR-4 自动加载，`passport/tests/smoke.php` 不依赖数据库与网络即可跑 |
 
 ### 与社区主站的关系
@@ -39,7 +39,8 @@
 
 ```
 passport/
-├── index.php                     通行证用户中心（登录/注册/账号信息/我的邦国/已授权应用/改密/管理员应用管理）
+├── index.php                     通行证用户中心（未登录为登录/注册标签页；登录后为左侧导航 + 右侧内容分区的仪表盘：
+│                                 概览 / 绑定管理 / 已授权应用 / 账号安全，管理员另有第三方应用与接口状态）
 ├── README.md                     本文件
 ├── api/
 │   ├── _guard.php                数据类接口共用访问守卫（Bearer 令牌或会话 Cookie）
@@ -52,7 +53,8 @@ passport/
 │   │   ├── email-code.php        POST   下发邮箱验证码
 │   │   ├── player.php            GET    查游戏内玩家（权威 + 缓存）
 │   │   ├── country.php           GET    查邦国（按 ID 或名称）
-│   │   └── authorized-apps.php   GET/DELETE  列出/撤销第三方授权
+│   │   ├── authorized-apps.php   GET/DELETE  列出/撤销第三方授权
+│   │   └── bindings.php          GET/POST/DELETE  绑定管理（列出 / 绑定 / 解绑可选绑定，详见第五节）
 │   └── oauth/                    OAuth 2.0 端点
 │       ├── authorize.php         GET/POST 授权端点（含授权确认页与错误页）
 │       ├── token.php             POST     令牌端点（三种 grant_type）
@@ -78,11 +80,12 @@ passport/
 │   │   ├── Response.php          统一响应格式与 OAuth2 错误格式
 │   │   ├── ApiException.php      业务异常 + OAuth2 错误载体
 │   │   └── Endpoint.php          端点运行器（CORS、OPTIONS、异常翻译、访问日志）
-│   ├── Contracts/                四个外部接口契约（接口到位后只需实现它们）
+│   ├── Contracts/                五个外部接口契约（接口到位后只需实现它们）
 │   │   ├── PlayerProvider.php    游戏内玩家数据源
 │   │   ├── CountryProvider.php   邦国数据源
-│   │   ├── EmailVerifier.php     邮箱验证码发送方
-│   │   └── SimpassVerifier.php   简幻通验证方
+│   │   ├── EmailVerifier.php     邮箱验证码发送方（可选绑定）
+│   │   ├── SimpassVerifier.php   简幻通验证方
+│   │   └── FanVerifyVerifier.php FanVerify 验证方（可选绑定）
 │   ├── Directory/                权威数据 + 本地缓存
 │   │   ├── PlayerDirectory.php   玩家目录（读缓存/回源/降级）
 │   │   ├── CountryDirectory.php  邦国目录（同步只覆盖权威字段）
@@ -90,17 +93,20 @@ passport/
 │   │   ├── CountryProfile.php    邦国值对象（含玩家列表，population 由列表长度派生）
 │   │   └── Providers/            HTTP 实现与「未接入」实现
 │   ├── Verification/             验证码与外部身份验证
-│   │   ├── EmailCodeService.php  验证码生成/限流/落库/一次性消费
+│   │   ├── EmailCodeService.php  验证码生成/限流/落库/一次性消费（scene：register / bind / reset）
 │   │   ├── HttpEmailVerifier.php 邮件发送 HTTP 实现（配置驱动）
 │   │   ├── HttpSimpassVerifier.php 简幻通校验 HTTP 实现（配置驱动）
 │   │   ├── SimpassIdentity.php   简幻通校验结果值对象
+│   │   ├── HttpFanVerifyVerifier.php FanVerify 校验 HTTP 实现（配置驱动）
+│   │   ├── FanVerifyIdentity.php FanVerify 校验结果值对象
 │   │   └── Unavailable*.php      未接入时的 Null Object（一律抛 not_implemented）
 │   ├── Identity/                 身份域
-│   │   ├── Account.php           账号只读视图（toPublicArray / toProfileArray）
+│   │   ├── Account.php           账号只读视图（toPublicArray / toProfileArray；email() 未绑定时返回 null）
 │   │   ├── AccountRepository.php 对 passport_accounts 的唯一写入入口
 │   │   ├── Authenticator.php     登录 / 登出 / 改密 / 当前用户
 │   │   ├── SessionStore.php      登录态（Cookie 只放随机令牌，库里只存 SHA-256）
-│   │   └── RegistrationService.php 注册流程编排
+│   │   ├── RegistrationService.php 注册流程编排
+│   │   └── BindingService.php    绑定管理（可选绑定的绑定 / 解绑，都要验当前密码）
 │   └── OAuth/                    OAuth 2.0 服务端
 │       ├── OAuthServer.php       授权、令牌、内省、吊销、限流
 │       ├── Scope.php             scope 定义（MAP / MACHINE_SCOPES / DEFAULT_SCOPE）
@@ -123,7 +129,7 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
         ┌────────────────────────────┼────────────────────────────┐
         ▼                            ▼                            ▼
    Identity\*                    OAuth\*                  Directory\* / Verification\*
-   （账号、会话、注册）            （授权、令牌）            （权威数据、验证码、外部身份）
+   （账号、会话、注册、绑定）      （授权、令牌）            （权威数据、验证码、外部身份）
         │                            │                            │
         └──────────────┬─────────────┴──────────────┬─────────────┘
                        ▼                            ▼
@@ -141,12 +147,12 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
 | `Http` | `Support` | `Endpoint` 依赖 `Application`，但只用于取日志器与配置 |
 | `Contracts` | `Directory` / `Verification` 的值对象 | 只声明方法签名，不含实现 |
 | `Directory` / `Verification` | `Contracts`、`Support`、`Http\ApiException` | 失败一律抛 `ApiException`，不返回错误码 |
-| `Identity` | `Directory`、`Verification`、`Support`、`Http` | 注册流程依赖目录与验证服务 |
+| `Identity` | `Directory`、`Verification`、`Support`、`Http` | 注册流程与绑定流程依赖目录与验证服务 |
 | `OAuth` | `Identity\Account(Repository)`、`Support`、`Http` | 令牌只认 `account_id`，不反向依赖目录 |
 | `Application` | 全部 | 唯一的装配点：`resolve*` / `shared()` / `bind()` |
 | `api/*.php` | `Application`、`Http` | 端点里只写参数校验与响应组装，不写业务逻辑 |
 
-**换实现只改一处**：`Application::playerProvider()` / `countryProvider()` / `emailVerifier()` / `simpassVerifier()` 会根据 `.env` 是否配置对应键，自动在 HTTP 实现与 `Unavailable*` 之间选择；测试或定制部署可用 `Application::bind('player_provider', $obj)` 运行期覆盖。
+**换实现只改一处**：`Application::playerProvider()` / `countryProvider()` / `emailVerifier()` / `simpassVerifier()` / `fanVerifyVerifier()` 会根据 `.env` 是否配置对应键，自动在 HTTP 实现与 `Unavailable*` 之间选择；测试或定制部署可用 `Application::bind('player_provider', $obj)` 运行期覆盖（五个数据源的键名分别是 `player_provider` / `country_provider` / `email_verifier` / `simpass_verifier` / `fanverify_verifier`）。
 
 **装配是自动的**：`Application::boot()` 显式装配（幂等），而 `Application::instance()` 在尚未装配时会**自动装配**（从项目根的 `.env` 读配置）。刻意不做成「必须记得先 boot」——少一个前置步骤，就少一整类「忘了启动」的线上故障。`Application::reset()` 仅供测试重置单例。
 
@@ -159,44 +165,130 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
 
 ### 4.1 实际校验顺序
 
+**必填**：游戏内玩家名（权威接口校验）、简幻通ID + 简幻通验证码。
+**可选**：验证邮箱 + 邮箱验证码、FanVerify 账号ID + 验证码 —— 用户不填就跳过，账号上对应字段落 `NULL`。
+
 | 步骤 | 内容 | 失败结果 |
 | --- | --- | --- |
-| 0 | **字段格式**：`username` 3–32 位仅 `[A-Za-z0-9_-]`；`email` ≤191 且通过 `FILTER_VALIDATE_EMAIL`；`player_name` 非空、≤32、不含 `<>` 与控制字符；`password` 8–72 位且不能纯字母/纯数字；`simpass_uid > 0`；`simpass_code` 非空 | 422 `invalid_request`，`details.field` 指向出错字段 |
-| 1 | **唯一性预检**（顺序：`username` → `email` → `player_name` → `simpass_uid`） | 409 `conflict`，`details.field`；真正的唯一性由唯一索引兜底 |
-| 2 | **① 游戏内玩家名权威校验**：`PlayerDirectory::find($playerName, true)` 强制回源 | 玩家不存在 → 422「游戏内不存在名为「X」的玩家」；权威返回名与输入大小写不敏感不一致 → 422「玩家名应为「Y」，请核对后重试」 |
-| 3 | **② 简幻通校验**：`SimpassVerifier::verify($simpassUid, $simpassCode, $playerName)` | 业务码不为成功码 → 422「简幻通验证失败：…」（`details.field = simpass_code`）；接口未接入 → 501 |
-| 4 | **③ 邮箱验证码校验**：`EmailCodeService::assertVerify($email, 'register', $emailCode)`，成功即消费 | 验证码错误/过期 → 422（`details.field = email_code`）；发送接口未接入 → 501 |
-| 5 | **落库**（`Database::transaction`）：写入 `username` / `email` / `email_verified_at` / `password_hash`（`password_hash(…, PASSWORD_DEFAULT)`）/ `simpass_uid` / `simpass_level` / `simpass_verified_at` / `player_name` / `player_id` / `country_id` / `player_synced_at` / `role='observer'` / `status=1` | 写库失败 → 500 `server_error` |
-| 6 | **邦国缓存预热**：`$player->hasCountry()` 时 `CountryDirectory::find($countryId, true)`；回源失败则 `CountryDirectory::touch($countryId, null)` 落一行占位（名称「邦国#ID」） | **尽力而为**：预热失败只记日志（`passport.country_warmup_skipped` / `passport.country_touch_failed`），不影响注册结果 |
-| 7 | **注册即登录**：`SessionStore::create()` 下发 HttpOnly Cookie，`AccountRepository::touchLogin()` 记录登录时间与 IP | — |
-| 8 | 记 `passport.registered` 日志，重新读取账号并返回 `data.account` | 读回失败 → 500「注册成功但读取账号失败，请尝试登录」 |
+| ① | **字段格式**：`username` 3–32 位仅 `[A-Za-z0-9_-]`；`player_name` 非空、≤32、不含 `<>` 与控制字符；`password` 8–72 位且不能纯字母/纯数字；`simpass_uid > 0`；`simpass_code` 非空。**邮箱只在填了的时候才校验格式**（≤191 且通过 `FILTER_VALIDATE_EMAIL`） | 422 `invalid_request`，`details.field` 指向出错字段 |
+| ② | **唯一性预检**（顺序：`username` → `email`（填了才查）→ `player_name` → `simpass_uid` → `fanverify_uid`（填了才查）） | 409 `conflict`，`details.field`；真正的唯一性由唯一索引兜底 |
+| ③ | **游戏内玩家名权威校验（必填）**：`PlayerDirectory::find($playerName, true)` 强制回源 | 玩家不存在 → 422「游戏内不存在名为「X」的玩家」；权威返回名与输入大小写不敏感不一致 → 422「玩家名应为「Y」，请核对后重试」 |
+| ④ | **简幻通校验（必填）**：`SimpassVerifier::verify($simpassUid, $simpassCode, $playerName)` | 业务码不为成功码 → 422「简幻通验证失败：…」（`details.field = simpass_code`）；接口未接入 → 501 |
+| ⑤ | **邮箱验证码校验（可选）**：没填邮箱就整段跳过；填了邮箱则 `EmailCodeService::assertVerify($email, 'register', $emailCode)`，成功即消费 | 填了邮箱却没填验证码 → 422「填写了邮箱就必须填写邮箱验证码」（`details.field = email_code`）；验证码错误/过期 → 422；发送接口未接入 → 501 |
+| ⑥ | **FanVerify 校验（可选）**：账号ID与验证码都没填就整段跳过；只填了其中一个 → 422；都填了才 `FanVerifyVerifier::verify($fanverifyUid, $fanverifyCode, $playerName)` | 只填一半 → 422「请填写正确的 FanVerify 账号ID」/「请填写 FanVerify 验证码」；校验失败 → 422（`details.field = fanverify_code`）；接口未接入 → 501 |
+| ⑦ | **落库**（`Database::transaction`）：写入 `username` / `password_hash`（`password_hash(…, PASSWORD_DEFAULT)`）/ `email` / `email_verified_at` / `simpass_uid` / `simpass_level` / `simpass_verified_at` / `fanverify_uid` / `fanverify_verified_at` / `player_name` / `player_id` / `country_id` / `player_synced_at` / `role='observer'` / `status=1`。**可选绑定未绑定时落 `NULL`，绝不写空串** | 写库失败 → 500 `server_error` |
+| ⑧ | **邦国缓存预热**：`$player->hasCountry()` 时 `CountryDirectory::find($countryId, true)`；回源失败则 `CountryDirectory::touch($countryId, null)` 落一行占位（名称「邦国#ID」） | **尽力而为**：预热失败只记日志（`passport.country_warmup_skipped` / `passport.country_touch_failed`），不影响注册结果 |
+| ⑨ | **注册即登录**：`SessionStore::create()` 下发 HttpOnly Cookie，`AccountRepository::touchLogin()` 记录登录时间与 IP | — |
+| ⑩ | 记 `passport.registered` 日志，重新读取账号并返回 `data.account` | 读回失败 → 500「注册成功但读取账号失败，请尝试登录」 |
 
-### 4.2 为什么是这个顺序
+> 代码里的行内注释把 ①~⑦ 依次标在「字段格式 / 唯一性 / 玩家名 / 简幻通 / 邮箱 / FanVerify / 落库」上，
+> 随后邦国缓存那一段又标了一次 ⑦（笔误，实际是落库之后的收尾步骤）。
+> 上表的 ⑧~⑩ 就对应落库之后的三个收尾步骤。
+
+### 4.2 可选绑定的落库语义
+
+这是本轮最容易被写错的一处，务必按代码理解：
+
+| 用户输入 | `email` | `email_verified_at` | `fanverify_uid` | `fanverify_verified_at` |
+| --- | --- | --- | --- | --- |
+| 什么都没填 | `NULL` | `NULL` | `NULL` | `NULL` |
+| 只填了邮箱 + 验证码 | 邮箱 | 注册时刻 | `NULL` | `NULL` |
+| 只填了 FanVerify | `NULL` | `NULL` | 账号ID | 注册时刻 |
+| 两样都填 | 邮箱 | 注册时刻 | 账号ID | 注册时刻 |
+
+- **落 `NULL` 而不是空串**：`uk_email` / `uk_fanverify_uid` 是唯一索引，MySQL/MariaDB 的唯一索引允许
+  多个 `NULL`，但空串会互相冲突——第二个不填邮箱的账号就注册不了了。
+- **填了邮箱则验证码必填**：否则等于绑了一个"未经证明属于自己"的邮箱，找回流程会被它带偏。
+- `Account::email()` 的返回类型是 `?string`，未绑定时为 `null`；配套的 `Account::hasEmail()` 用于判断"有没有绑"。
+- `AccountRepository::findByEmail('')` 直接返回 `null`（不去查 `WHERE email = ''`）；
+  `findByLogin()` 的 SQL 是 `username = ? OR (email IS NOT NULL AND email = ?)`，未绑定的账号只按用户名匹配。
+
+### 4.3 为什么是这个顺序
 
 代码注释给出了明确理由，请勿随手调换：
 
-> 校验顺序刻意从「最可能失败、最贵」到「最便宜、一次性」：**玩家 → 简幻通 → 邮箱验证码**。
-> 邮箱验证码放最后，是为了不在前两项失败时白白烧掉一个验证码。
+> 校验顺序刻意从"最可能失败、最贵"到"最便宜、一次性"：
+> 玩家 → 简幻通 → 邮箱 → FanVerify。
+> 邮箱验证码放后面，是为了不在前两项失败时白白烧掉一个验证码。
 
 - 玩家名校验要打第三方接口，最贵、也最容易因为用户手抖写错而失败 → 排第一。
 - 简幻通校验要打第三方接口，且需要用户去小程序取验证码 → 排第二。
-- 邮箱验证码是一次性资源（校验成功即消费、同邮箱 60 秒内不能重发、每小时最多 5 次）→ 排最后。
+- 邮箱验证码是一次性资源（校验成功即消费、同邮箱 60 秒内不能重发、每小时最多 5 次）→ 排在两个必填项之后。
+- FanVerify 同样要打第三方接口、同样需要用户去外部取验证码 → 排在最后。
 - 唯一性预检放在所有外部调用之前，纯本地查询，最便宜。
 
 > ⚠ 注意：部分设计描述里把顺序写成「邮箱验证码 → 玩家名 → 简幻通」，**与实现不符**。
 > 以本文件与 `RegistrationService::register()` 的代码为准。
 
-### 4.3 本地联调开关
+### 4.4 本地联调开关
 
 `verificationEnabled()` 为 `false` 的条件是 **`PASSPORT_DEBUG=1` 且 `PASSPORT_DEV_BYPASS_VERIFICATION=1` 同时成立**，
-此时跳过 ②（简幻通）与 ③（邮箱验证码），并每次记 `passport.verification_bypassed` 的 **WARNING** 日志。
-步骤 ①（玩家名权威校验）**永不跳过**。生产环境两个开关都必须保持 `0`。
+此时跳过 ④（简幻通）、⑤（邮箱验证码）与 ⑥（FanVerify），并每次记 `passport.verification_bypassed` 的
+**WARNING** 日志（日志里带 `step` 字段，取值为 `simpass` / `email` / `fanverify`）。
+步骤 ③（玩家名权威校验）**永不跳过**。生产环境两个开关都必须保持 `0`。
 
 ---
 
-## 五、权威数据缓存策略
+## 五、绑定管理
 
-### 5.1 权威主键与缓存字段
+通行证上的绑定分两类，这条边界决定了「哪些能改、哪些不能改」：
+
+| 类别 | 绑定 | 可解绑（`bindable`） | 说明 |
+| --- | --- | --- | --- |
+| 必填 | 游戏内玩家名 | ✗ | 权威身份主键，注册时经权威接口实时校验 |
+| 必填 | 简幻通ID | ✗ | 注册时校验通过，同时是默认的账号找回通道 |
+| 可选 | 验证邮箱 | ✓ | 用户自己决定绑不绑，随时可绑可解 |
+| 可选 | FanVerify 账号 | ✓ | 同上；接口未接入时 `available` 为 `false`，前端禁用绑定按钮（见 7.5） |
+
+服务实现 `src/Identity/BindingService.php`（`Application::bindings()` 可取），
+HTTP 端点 `passport/api/v1/bindings.php`。必填绑定不在这里管理，也无法解绑。
+
+### 5.1 安全约定：绑定与解绑都要验当前密码
+
+**绑定与解绑都要求提供当前密码**（字段名 `password`），缺失或错误一律 422「当前密码不正确」。
+
+原因：绑定会改变账号的**找回途径**。若只凭登录态就能绑邮箱，一个被盗用的会话（或 XSS 偷到的 Cookie）
+就能把攻击者的邮箱挂到受害者账号上，再走"邮箱找回"流程彻底夺走账号；解绑同理，
+攻击者也能把受害者的真实邮箱摘掉。要求当前密码，等于强制"这是本人操作"。
+
+校验集中在 `BindingService::assertPassword()` 一处，四种操作（绑/解绑 × 邮箱/FanVerify）共用。
+
+### 5.2 `bindings` 端点的三种用法
+
+`passport/api/v1/bindings.php`，鉴权是**通行证会话 Cookie**（`Authenticator::requireCurrent()`，
+不是第三方接口，也不接受 Bearer 令牌）：
+
+| 方法 | 用途 | 关键参数 |
+| --- | --- | --- |
+| `GET /passport/api/v1/bindings` | 列出全部绑定状态 | 无 |
+| `POST /passport/api/v1/bindings` | 绑定 | `type=email`：`email` + `code` + `password`；`type=fanverify`：`uid` + `code` + `password` |
+| `DELETE /passport/api/v1/bindings` | 解绑 | `type`（query 或 body）+ `password`（**仅 body**） |
+
+- `bindings` 的每一项结构是 `{label, bound, required, bindable, value, detail}`；
+  两个可选绑定（`email` / `fanverify`）额外带一个 `available` 字段，表示**该绑定对应的外部接口是否已接入**
+  （判定依据分别是 `EmailCodeService::isDeliverable()` 与 `FanVerifyVerifier::isConfigured()`）。
+  前端据此直接禁用按钮并说明原因，而不是让用户白点一次。
+- `POST` / `DELETE` 成功后返回最新的 `bindings` 与 `account`（`POST` 多一个 `bound`、`DELETE` 多一个 `unbound`），
+  前端不用再补一次 `GET`。
+- `GET /passport/api/v1/me` 也会带上同一份 `bindings`。
+- `type` 只支持 `email` / `fanverify`，其它值 → 422「不支持的绑定类型，仅支持 email 或 fanverify」。
+
+> ⚠ `password` 一律走**请求体**，不接受查询串 —— 放进 URL 会被 Web 服务器访问日志、
+> 浏览器历史与 `Referer` 记录下来。`type` 无敏感性，允许放查询串。
+
+字段级细节（完整返回结构、全部错误码）见 [`docs/PASSPORT-API.md`](../docs/PASSPORT-API.md) 第 10.3 节。
+
+### 5.3 邮箱验证码的场景（scene）
+
+登录后补绑邮箱用的是 scene `bind`，与注册时的 `register` 分开计数、互不干扰。
+`EmailCodeService::normalizeScene()` 的白名单是 `register` / `bind` / `reset`，
+旧写法 `rebind` 会自动映射为 `bind`；白名单以外的值一律回落为 `register`。
+
+---
+
+## 六、权威数据缓存策略
+
+### 6.1 权威主键与缓存字段
 
 | 位置 | 权威主键 | 权威缓存（可被接口覆盖） | 站内补充（权威接口不碰） |
 | --- | --- | --- | --- |
@@ -210,13 +302,13 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
 - **`country_id` 上刻意不加外键**：缓存可能先于权威数据落库，加外键会导致合法的玩家记录写不进来。
 - **`population` 是派生值**：等于该邦国玩家列表长度（`CountryProfile::population()`），不是独立字段。
 
-### 5.2 TTL
+### 6.2 TTL
 
 - 统一由 `DIRECTORY_CACHE_TTL` 控制，默认 **600 秒**（`PlayerDirectory::rowIsStale()` / `CountryDirectory::rowIsStale()`）。
 - `DIRECTORY_CACHE_TTL <= 0` 时 `rowIsStale()` 恒返回 `false`，即缓存**永不过期**（只靠显式 `fresh=1` 回源）。
 - 判定依据是行上的 `synced_at`：`synced_at` 无法解析或 `now - synced_at > ttl` 即视为过期。
 
-### 5.3 读取与降级行为
+### 6.3 读取与降级行为
 
 `PlayerDirectory::find($name, $fresh)` 与 `CountryDirectory::find()/findByName()` 的策略一致：
 
@@ -232,7 +324,7 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
 > ⚠ `fresh = true` 只表示「跳过『缓存未过期就直接返回』这一步」，**不保证**一定拿到权威数据：
 > 数据源未配置或回源失败时仍会返回旧缓存。
 
-### 5.4 各接口的取数口径
+### 6.4 各接口的取数口径
 
 | 接口 | 口径 |
 | --- | --- |
@@ -242,7 +334,7 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
 | `GET /passport/api/v1/country` | `fresh` 参数默认 `false` |
 | 通行证用户中心「强制同步」按钮 | 前端显式传 `fresh=1` |
 
-### 5.5 邦国同步的覆盖范围
+### 6.5 邦国同步的覆盖范围
 
 `CountryDirectory::sync()` 在一个事务里做两件事：
 
@@ -254,19 +346,31 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
 
 ---
 
-## 六、TODO 清单：四个待接入的外部接口
+## 七、TODO 清单：五个待接入的外部接口
 
-四个接口都遵循同一套设计：
+五个接口都遵循同一套设计：
 
 1. 契约在 `src/Contracts/`，HTTP 实现已经写好且**由 `.env` 配置驱动**，未配置时由 `Unavailable*` 接管；
 2. 对接时**通常不需要改代码，只要填 `.env`**；只有返回结构无法用点路径表达时才改一个 `map*()` / `build*()` 方法；
 3. **未接入时明确报 `not_implemented`（HTTP 501），绝不静默放行**。这是硬约束：
    宁可注册失败并说清原因，也不允许出现未经权威校验的账号。
 
-### 6.1 邮箱验证码
+但**必填绑定与可选绑定的影响面不同**，这决定了"接口没接好能不能先上线"：
 
+| 接口 | 绑定性质 | 未接入时的影响 |
+| --- | --- | --- |
+| 游戏内玩家（7.2） | 注册必填 | **注册直接失败**（501），且玩家查询接口不可用 |
+| 简幻通（7.4） | 注册必填 | **注册直接失败**（501） |
+| 邦国信息（7.3） | 查询用 | 邦国查询 501；注册时的邦国预热失败**不影响注册** |
+| 邮箱验证码（7.1） | **可选绑定** | 只挡「绑定验证邮箱」这一步；用户不勾选即可正常注册 |
+| FanVerify（7.5） | **可选绑定** | 只挡「绑定 FanVerify」这一步；用户不勾选即可正常注册 |
+
+### 7.1 邮箱验证码（可选绑定）
+
+- **定位：可选绑定**（与 7.5 的 FanVerify 同级）。未接入**不影响注册与登录**——
+  用户不勾选「绑定验证邮箱」就能正常注册；只有主动发起邮箱绑定/验证时才会看到 501。
 - **对应 `.env` 变量**（见 `.env.example` 与 `Support/Config.php` 默认值表）：
-  `EMAIL_API_URL`（必填，为空即视为未接入）、`EMAIL_API_TOKEN`、`EMAIL_API_TIMEOUT`（默认 8）、
+  `EMAIL_API_URL`（本接口的开关，为空即视为未接入）、`EMAIL_API_TOKEN`、`EMAIL_API_TIMEOUT`（默认 8）、
   `EMAIL_API_METHOD`（`POST` 默认 / `GET`）、`EMAIL_API_BODY_TEMPLATE`（JSON 模板，占位符
   `{email}` `{code}` `{scene}` `{ttl}` `{minutes}` `{app_name}`）、`EMAIL_API_SUCCESS_FIELD`、
   `EMAIL_API_MESSAGE_FIELD`、`EMAIL_CODE_TTL`（默认 600）、`EMAIL_FROM_NAME`。
@@ -277,11 +381,14 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
   若新接口是查询串形态或需要签名头，重写 `buildBody()` / `authHeaders()` 即可。
 - **验证码逻辑本身已完成**（`EmailCodeService`）：6 位数字、SHA-256 落库、同邮箱同场景 60 秒最小重发间隔、
   每小时最多 5 次、默认 10 分钟有效、最多 5 次校验失败后作废、校验成功即消费、发送失败自动作废刚写入的码。
+  场景（scene）白名单为 `register`（注册时绑定）/ `bind`（登录后补绑）/ `reset`（找回密码，接口接入后启用），
+  旧写法 `rebind` 映射为 `bind`。
 - **未接入时的表现**：
   - `POST /passport/api/v1/email-code` → 501 `not_implemented`「邮箱验证码发送接口尚未接入（TODO）。请在 .env 中配置 EMAIL_API_URL 后重试。」
-  - 注册流程的邮箱验证码校验（三处外部校验中的最后一步）→ 501 `not_implemented`「邮箱验证码发送接口尚未接入，无法完成邮箱验证。…」
+  - 注册流程中**只有用户填了邮箱**时才会走到邮箱验证码校验 → 501 `not_implemented`「邮箱验证码发送接口尚未接入，无法完成邮箱验证。…」；**不填邮箱则完全不受影响**。
+  - 绑定邮箱（`POST /passport/api/v1/bindings`，`type=email`）→ 501；此时 `GET …/bindings` 里 `email.available` 为 `false`。
 
-### 6.2 游戏内玩家
+### 7.2 游戏内玩家（注册必填）
 
 - **对应 `.env` 变量**：`PLAYER_API_BASE`、`PLAYER_API_PATH`（默认 `/player/{player}`，占位符
   `{player}` 或 `{player_name}`，会做 URL 编码）、`PLAYER_API_TOKEN`（填了就以 `Authorization: Bearer` 带上）、
@@ -299,10 +406,10 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
   三个字段一个都没解析出来 → `null` 并记 `player_provider.unmapped_response`；
   传输失败 / 非 2xx / 非法 JSON → 抛 `ApiException`（500 `server_error`）。
 - **未接入时的表现**：
-  - 注册流程的玩家名校验（三处外部校验中的第一步）→ 501 `not_implemented`「玩家信息接口尚未接入，无法校验游戏内玩家名。请在 .env 中配置 PLAYER_API_BASE / PLAYER_API_PATH」
+  - 注册流程的玩家名校验（必填校验的第一步）→ 501 `not_implemented`「玩家信息接口尚未接入，无法校验游戏内玩家名。请在 .env 中配置 PLAYER_API_BASE / PLAYER_API_PATH」
   - `GET /passport/api/v1/player`（且本地无该玩家缓存）→ 501
 
-### 6.3 邦国信息
+### 7.3 邦国信息
 
 - **对应 `.env` 变量**：`COUNTRY_API_BASE`、`COUNTRY_API_PATH`（默认 `/country/{country_id}`，占位符
   `{country_id}` 或 `{country}`）、`COUNTRY_API_PATH_BY_NAME`（可选，占位符 `{country}` 或 `{country_name}`）、
@@ -323,9 +430,9 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
   - `GET /passport/api/v1/country?name=…`（且本地无缓存）→ 501「…无法按名称查询邦国。请在 .env 中配置 COUNTRY_API_BASE / COUNTRY_API_PATH_BY_NAME」
   - 即使只配了 `COUNTRY_API_BASE` / `COUNTRY_API_PATH` 而没配 `COUNTRY_API_PATH_BY_NAME`，按名称查询也会明确报错
     「邦国信息接口未提供按名称查询，请使用邦国ID，或配置 COUNTRY_API_PATH_BY_NAME」，不猜、不扫全表。
-  - 注册时的邦国预热失败**不会**让注册失败（见 4.1 第 6 步）。
+  - 注册时的邦国预热失败**不会**让注册失败（见 4.1 第 ⑧ 步）。
 
-### 6.4 简幻通
+### 7.4 简幻通（注册必填）
 
 - **对应 `.env` 变量**：`SIMPASS_API_URL`、`SIMPPASS_ACCESS_TOKEN`（注意是**双 P**，代码、`Config.php` 默认值表与
   `.env.example` 三处一致，请照抄）、`SIMPASS_API_TIMEOUT`、`SIMPASS_API_METHOD`（`POST` 默认 / `GET`）、
@@ -342,27 +449,59 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
   新接口若是 JSON body，把 `postForm(...)` 换成 `postJson(...)` 一行即可。
 - **交叉校验**：若配置了 `SIMPASS_API_PLAYER_FIELD` 且简幻通返回的绑定玩家名与用户填写的大小写不敏感不一致，
   直接 422 拒绝（`details.field = player_name`）。
-- **未接入时的表现**：注册流程的简幻通校验（三处外部校验中的第二步）→ 501 `not_implemented`「简幻通验证接口尚未接入，请在 .env 中配置 SIMPASS_API_URL / SIMPPASS_ACCESS_TOKEN」。
+- **未接入时的表现**：注册流程的简幻通校验（必填校验的第二步）→ 501 `not_implemented`「简幻通验证接口尚未接入，请在 .env 中配置 SIMPASS_API_URL / SIMPPASS_ACCESS_TOKEN」。
 
-> 管理员可在 `/passport/` 页面的「接口接入状态」卡片里一眼看到四个接口哪些已接入、哪些待接入
-> （判定依据分别是 `emailVerifier()->isConfigured()` / `playerProvider()->isConfigured()` /
-> `countryProvider()->isConfigured()` / `simpassVerifier()->isConfigured()`）。
+### 7.5 FanVerify（可选绑定）
+
+- **定位：可选绑定**（与 7.1 的邮箱验证码同级）。未接入**不影响注册与登录**——
+  用户不勾选「绑定 FanVerify 账号」就能正常注册；只有主动发起 FanVerify 绑定时才会看到 501。
+- **对应 `.env` 变量**（见 `.env.example` 与 `Support/Config.php` 默认值表）：
+  `FANVERIFY_API_URL`（本接口的开关，为空即视为未接入）、`FANVERIFY_API_TOKEN`（填了就以
+  `Authorization: Bearer` 带上）、`FANVERIFY_API_TIMEOUT`（默认 8）、`FANVERIFY_API_METHOD`
+  （`POST` 默认 / `GET`）、`FANVERIFY_API_SUCCESS_CODE`（默认 `200`；**留空表示只看 HTTP 状态**，
+  适配不返回业务码的接口）、`FANVERIFY_API_CODE_FIELD`（默认 `code`）、`FANVERIFY_API_MESSAGE_FIELD`
+  （默认 `msg`）、`FANVERIFY_API_UID_FIELD`（默认 `data.uid`）、`FANVERIFY_API_PLAYER_FIELD`
+  （可选，FanVerify 侧绑定的游戏玩家名，用于交叉校验）。
+- **需要实现的接口文件**：`src/Contracts/FanVerifyVerifier.php`（契约，方法 `verify()` /
+  `isConfigured()` / `sourceName()`）；HTTP 实现 `src/Verification/HttpFanVerifyVerifier.php`，
+  对接点是 `buildRequest()` / `mapIdentity()` / `authHeaders()` 三个方法；
+  未配置时绑定 `src/Verification/UnavailableFanVerifyVerifier.php`。
+  返回值是值对象 `src/Verification/FanVerifyIdentity.php`（`uid()` / `playerName()`）。
+- **对接时通常无需改代码**：默认调用形态是 POST + query string，参数为
+  `uid` / `verify_code` / `mc_username` / `ip`；响应里账号ID的默认候选路径是
+  `data.uid` / `data.id` / `uid` / `user_info.uid`，对不上时用 `FANVERIFY_API_*_FIELD` 指定。
+  新接口若是 JSON body 或需要签名头，重写 `buildRequest()` / `authHeaders()` 即可。
+- **交叉校验**：配置了 `FANVERIFY_API_PLAYER_FIELD` 且 FanVerify 返回的绑定玩家名与当前通行证的
+  游戏内玩家名大小写不敏感不一致时，直接 422 拒绝（`details.field = fanverify_uid`）。
+- **未接入时的表现**：
+  - 注册流程中**只有用户勾选并填写了 FanVerify** 时才会走到这一步 → 501；**不勾选则完全不受影响**。
+  - 绑定 FanVerify（`POST /passport/api/v1/bindings`，`type=fanverify`）→ 501 `not_implemented`
+    「FanVerify 验证接口尚未接入。请在 .env 中配置 FANVERIFY_API_URL / FANVERIFY_API_TOKEN」；
+    此时 `GET …/bindings` 里 `fanverify.available` 为 `false`。
+
+> 管理员可在 `/passport/` 页面的「接口接入状态」卡片里一眼看到**五个接口**哪些已接入、哪些待接入
+> （判定依据分别是 `playerProvider()->isConfigured()` / `simpassVerifier()->isConfigured()` /
+> `emailVerifier()->isConfigured()` / `fanVerifyVerifier()->isConfigured()` /
+> `countryProvider()->isConfigured()`；卡片上会把游戏内玩家与简幻通标为「必填」，
+> 邮箱验证码、FanVerify、邦国信息标为「可选」）。
 
 ---
 
-## 七、本地开发与部署
+## 八、本地开发与部署
 
-### 7.1 准备配置
+### 8.1 准备配置
 
 ```bash
 cp .env.example .env
 # 必填：DB_HOST / DB_PORT / DB_NAME=bgjq8w / DB_USER=bgjq8w / DB_PASS
-# 按需填：PASSPORT_BASE_URL、四个外部接口的地址与令牌
+# 按需填：PASSPORT_BASE_URL，以及五个外部接口的地址与令牌
+#   PLAYER_API_BASE / COUNTRY_API_BASE / SIMPASS_API_URL  —— 关系到注册必填校验
+#   EMAIL_API_URL / FANVERIFY_API_URL                     —— 可选绑定，不填不影响注册
 ```
 
 `.env` 已被 `.gitignore` 排除（`.env`、`.env.*`，仅保留 `!.env.example`）。`.env.example` 里只允许出现占位值。
 
-### 7.2 初始化数据库（`bin/init-database.ps1`）
+### 8.2 初始化数据库（`bin/init-database.ps1`）
 
 ```powershell
 # 推荐：交互式输入 MySQL 管理员密码
@@ -392,7 +531,12 @@ pwsh ./bin/init-database.ps1 -RootUser root -MysqlHost localhost -MysqlExe "C:\m
 > 手工导入：自己把 `__DB_PASSWORD__` 替换成真实密码后 `mysql -u root -p < 渲染文件`，
 > 并且**不要把替换后的文件提交到仓库**（`database/*.rendered.sql` 也已在 `.gitignore` 里）。
 
-### 7.3 跑起来
+**已经导入过上一版结构、库里已有数据的场景**：不要重跑 init 脚本（它会重建库与账号），
+改跑增量升级脚本 `database/upgrade-email-optional-fanverify.sql`
+（把 `email` 改为允许 `NULL`、补 `fanverify_uid` / `fanverify_verified_at` 两列与 `uk_fanverify_uid` 索引）。
+用法与自检输出见 [`docs/MIGRATION.md` 第 2.4 节](../docs/MIGRATION.md)。
+
+### 8.3 跑起来
 
 - 站点根指向项目根目录，按 `nginx-8w.bgjq.top.conf` 配置 Nginx（PHP 8.4 FPM）。
 - 通行证相关路由：
@@ -411,23 +555,29 @@ pwsh ./bin/init-database.ps1 -RootUser root -MysqlHost localhost -MysqlExe "C:\m
 - `location ^~ /passport/src/` 与 `location ^~ /passport/storage/` 都是 `deny all`；
   `/passport/assets/` 缓存 7 天。
 - **部署注意**：`passport/storage/logs/` 需要 PHP-FPM 用户可写（`Logger` 会自动 `mkdir`，失败则退回 `error_log`）。
-- 打开 `https://<域名>/passport/`：未登录显示登录/注册；已登录显示账号、我的邦国、已授权应用、改密；
-  管理员（默认角色 `secretary_general`，可用 `PASSPORT_ADMIN_ROLES` 配置）额外显示第三方应用管理与接口接入状态。
+- 打开 `https://<域名>/passport/`：未登录是**登录 / 注册两个标签页**（注册页把验证邮箱与 FanVerify
+  做成两个复选框开关，勾选才展开对应字段）；登录后进入**左侧导航 + 右侧内容分区**的仪表盘：
+  概览、绑定管理、已授权应用、账号安全。
+  管理员（默认角色 `secretary_general`，可用 `PASSPORT_ADMIN_ROLES` 配置）额外可见
+  「第三方应用」与「接口状态」两块。
+- `passport/assets/passport.css` 是一套完整设计系统（CSS 变量令牌、深色模式、900/640/380px 三档响应式、
+  触屏 44px 点击目标、`prefers-reduced-motion` / `prefers-contrast`、打印样式），
+  用户中心与 OAuth 授权确认页共用同一套样式。
 
-### 7.4 提交前闸门
+### 8.4 提交前闸门
 
 ```powershell
 pwsh ./bin/test.ps1
 ```
 
 该脚本先对全量 `.php` 文件跑 `php -l`（跳过 `vendor` / `node_modules` / `storage`），
-再运行 `passport/tests/smoke.php`，覆盖九个部分：`Arr` 点路径取值、`Scope` 授权范围、`Str` 随机与哈希、
-`Config` 配置读取、`Directory` 权威数据值对象、`Http` 响应与异常格式、
-未接入接口的失败语义（关键：绝不静默放行）、`database/8w_passport.sql` 结构自检、
-`Application` 依赖装配（最容易「忘了启动」的地方）。
+再运行 `passport/tests/smoke.php`，覆盖十一个部分：`Arr` 点路径取值、`Scope` 授权范围、
+`Account` 可选绑定语义、未接入的可选绑定（只挡绑定不挡注册）、`Str` 随机与哈希、`Config` 配置读取、
+`Directory` 权威数据值对象、`Http` 响应与异常格式、未接入接口的失败语义（关键：绝不静默放行）、
+`database/8w_passport.sql` 结构自检、`Application` 依赖装配（最容易「忘了启动」的地方）。
 两项全绿才允许提交。
 
-### 7.5 日常维护任务
+### 8.5 日常维护任务
 
 过期数据不会自己消失，建议每天跑一次清理（幂等，重复执行无副作用）：
 
@@ -453,15 +603,18 @@ php bin/maintenance.php --log-days=60
 
 ---
 
-## 八、安全要点备忘
+## 九、安全要点备忘
 
 - 密码：`password_hash(…, PASSWORD_DEFAULT)`；登录时账号不存在也走一次 `password_verify`，避免响应时间枚举账号。
+- **绑定管理：绑定与解绑都要验当前密码**（见 5.1），防止被盗用的登录态把攻击者的邮箱/身份挂上来夺号。
 - 会话：Cookie 只放 32 字节随机令牌（`HttpOnly`、`SameSite=Lax`、HTTPS 下 `Secure`），库里只存 SHA-256；
   令牌无效/过期时顺手清掉浏览器里的 Cookie；改密后除当前会话外全部销毁。
 - 令牌与授权码：库里只存 SHA-256，明文只在签发那一刻返回一次。
 - 授权端点：`client_id` / `redirect_uri` 校验失败时**绝不重定向**（防开放重定向），只渲染错误页；
   回调地址必须精确命中登记的白名单。
 - 授权码：一次性消费（`UPDATE … WHERE consumed_at IS NULL`），已消费的码被再次使用时会连带吊销该码签发的令牌。
-- 日志：`Logger` 会把 `password` / `password_hash` / `client_secret` / `token` / `access_token` /
-  `refresh_token` / `code` / `email_code` / `simpass_code` 等键自动打码成 `***`。
+- 日志：`Logger` 按**键名**打码，当前名单是 `password` / `password_hash` / `client_secret` / `token` /
+  `access_token` / `refresh_token` / `code` / `email_code` / `simpass_code`（见 `Support/Logger.php` 的
+  `$redactKeys`）。**新增带密钥语义的字段名时必须同步加进这个名单**——例如 FanVerify 的
+  `fanverify_code` 目前不在名单里，好在现有代码从不把它写进日志上下文。
 - 数据库：`Support\Database` 禁用模拟预处理（`PDO::ATTR_EMULATE_PREPARES => false`）。

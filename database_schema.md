@@ -30,16 +30,38 @@
 
 ### `passport_accounts` 关键字段
 
+账号上的绑定分两类：
+
+- **必填且不可解绑**：游戏内玩家名（权威身份主键）、简幻通ID（默认的账号找回通道）
+- **可选绑定**：验证邮箱、FanVerify 账号 —— 用户自己决定绑不绑，随时可绑可解
+
 | 字段 | 说明 |
 |---|---|
 | `id` | 通行证UID（对外唯一标识） |
-| `username` / `email` / `password_hash` | 登录凭据 |
-| `email_verified_at` | 邮箱验证通过时间 |
-| `simpass_uid` / `simpass_level` / `simpass_verified_at` | 简幻通身份 |
-| `player_name` | **游戏内玩家名（权威主键）** |
+| `username` / `password_hash` | 登录凭据 |
+| `email` | 验证邮箱，**可选绑定，NULL = 未绑定**（不是空串） |
+| `email_verified_at` | 邮箱验证通过时间，NULL 表示未绑定或未验证 |
+| `simpass_uid` / `simpass_level` / `simpass_verified_at` | 简幻通身份（注册必填） |
+| `fanverify_uid` | FanVerify 账号ID，**可选绑定，NULL = 未绑定** |
+| `fanverify_verified_at` | FanVerify 验证通过时间 |
+| `player_name` | **游戏内玩家名（权威主键，注册必填）** |
 | `player_id` | 玩家ID（权威缓存） |
 | `country_id` | 玩家所属邦国ID（权威缓存） |
 | `role` / `status` | 站内角色 / 账号状态 |
+
+### `passport_accounts` 唯一索引
+
+| 索引 | 字段 | 说明 |
+|---|---|---|
+| `uk_username` | `username` | 登录名唯一 |
+| `uk_email` | `email` | 邮箱全局唯一 |
+| `uk_simpass_uid` | `simpass_uid` | 简幻通ID全局唯一 |
+| `uk_fanverify_uid` | `fanverify_uid` | FanVerify 账号ID全局唯一 |
+| `uk_player_name` | `player_name` | 游戏内玩家名唯一 |
+
+**唯一索引允许多个 NULL**，所以 `uk_email` 与 `uk_fanverify_uid` 上的"可选绑定"不会互相冲突：
+多个未绑定邮箱（或未绑定 FanVerify）的账号可以共存，一旦绑定则必须全局唯一。
+也正因如此，代码里**未绑定时一律落 `NULL` 而不是空串**——空串会占用唯一索引，第二个不填邮箱的账号就注册不了了。
 
 ---
 

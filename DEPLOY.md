@@ -89,8 +89,15 @@ PASSPORT_SESSION_TTL=86400
 PLAYER_API_BASE=
 COUNTRY_API_BASE=
 SIMPASS_API_URL=
+
+# 可选绑定接口：不接入也能注册与登录，只是对应绑定功能不可用
 EMAIL_API_URL=
+FANVERIFY_API_URL=
 ```
+
+> `EMAIL_API_URL` 与 `FANVERIFY_API_URL` 是**可选绑定**（验证邮箱 / FanVerify 账号）对应的接口，
+> 未配置时不影响注册与登录；`PLAYER_API_BASE` / `COUNTRY_API_BASE` / `SIMPASS_API_URL`
+> 则关系到注册必填校验，未配置时注册会明确返回 501。
 
 `php/config.php` 只负责社区站点自身的数据库连接，通过 `env()` 读取上述变量，
 不再硬编码任何凭据。
@@ -182,7 +189,7 @@ sudo yum install php php-mysqlnd php-curl php-json php-mbstring
 | 扩展 | 用途 |
 |---|---|
 | `pdo_mysql` | 数据库访问（通行证与社区站点共用） |
-| `curl` | 调用邮箱验证码 / 游戏内玩家 / 邦国 / 简幻通四个外部接口 |
+| `curl` | 调用游戏内玩家 / 邦国 / 简幻通 / 邮箱验证码 / FanVerify 五个外部接口 |
 | `openssl` | 生成密码学安全随机数（会话令牌、OAuth 令牌、验证码） |
 | `mbstring` | 中文与多字节字符串处理 |
 
@@ -259,6 +266,10 @@ pwsh ./bin/test.ps1
 ### 认证API
 
 #### 注册
+
+> 这是站内**兼容入口**，响应仍是旧格式 `{success, message, data}`。
+> 新代码请直接用 `POST /passport/api/v1/register`（响应为 `{"ok":true,"data":{…}}`）。
+
 ```
 POST /api/v1/auth.php?action=register
 Content-Type: application/json
@@ -266,10 +277,18 @@ Content-Type: application/json
 {
     "username": "testuser",
     "password": "password123",
-    "game_id": "Player123",
-    "country_id": 1
+    "player_name": "Player123",
+    "simpass_uid": 10086,
+    "simpass_code": "654321",
+
+    "email": "testuser@example.com",
+    "email_code": "123456"
 }
 ```
+
+- **必填**：`username`、`password`、`player_name`（提交时会调用权威接口实时校验）、`simpass_uid`、`simpass_code`。
+- **可选**：`email` + `email_code`（填了邮箱则验证码必填）、`fanverify_uid` + `fanverify_code`。
+- 所属邦国由权威接口自动识别，**不接受**前端传入的 `country_id`（旧示例里的 `game_id` 也已改名 `player_name`）。
 
 #### 登录
 ```

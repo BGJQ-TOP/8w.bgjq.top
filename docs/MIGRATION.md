@@ -119,7 +119,7 @@ SELECT * FROM users LIMIT 1;                   -- 视图可查
 然后打开站点：
 
 - `https://<域名>/passport/` → 用首个管理员通行证登录；
-- 登录后管理员可见「接口接入状态」卡片，逐项确认四个外部接口的接入状态；
+- 登录后管理员可见「接口接入状态」卡片，逐项确认五个外部接口的接入状态；
 - 抽查主站页面（首页、世界动态、社区大会、法庭、公共服务）与 `/api/v1/users.php`（管理员）是否正常。
 
 **第 5 步：确认无误后再清理旧库**
@@ -152,13 +152,44 @@ mysql -u root -p < 8w_passport.rendered.sql
 ### 2.3 旧库数据怎么办
 
 - **身份数据**：`users` 表的内容不自动搬运。新库 `passport_accounts` 要求每条记录都有
-  `player_name`（唯一）与 `email`（唯一），且注册路径要求邮箱、玩家名、简幻通三重校验通过，
+  `player_name`（唯一，必填）与 `simpass_uid`（唯一，必填），且注册路径要求玩家名与简幻通双重
+  外部校验通过；`email` 与 `fanverify_uid` 是**可选绑定**，允许为 `NULL`，
   因此批量搬运旧账号没有意义——推荐让用户用 `/passport/` 重新注册，或由管理员在后台
   （`api/v1/users.php` 的 POST，走 `Auth::provision()`）逐个开号。
+  （注意：管理员开号路径 `Auth::provision()` **仍然要求填邮箱**，这是它与用户自助注册的区别。）
 - **社区业务数据**：`news` / `proposals` / `votes` / `cases` / `trades` / `services` 等表结构保持旧列名，
   可以按 `author_id` / `user_id` / `proposer_id` 等列直接迁移；**前提是 `passport_accounts.id` 与原 `users.id`
   一一对应**。若做了重新注册，需要一张映射表把旧 ID 映射到新通行证 UID 后再迁移。
 - **权威数据缓存**：`players` / `countries` 不必迁移，接口接入后会自动回填（注册与查询时回源）。
+
+### 2.4 已导入过旧版结构的库：增量升级脚本
+
+`database/8w_passport.sql` 是**最终结构**，全新部署直接导入它即可，不需要额外动作。
+
+但如果你这个库**已经导入过上一版 `8w_passport.sql`**（那一版 `email` 是 `NOT NULL`，
+且完全没有 FanVerify 字段），就需要跑一次增量升级脚本，把结构对齐到最新：
+
+```bash
+mysql -u root -p bgjq8w < database/upgrade-email-optional-fanverify.sql
+```
+
+它做四件事，每一步都先用 `information_schema` 判断当前状态，**已完成的步骤自动跳过，可重复执行**：
+
+| 步骤 | 内容 |
+| --- | --- |
+| 1 | `passport_accounts.email` 由 `NOT NULL` 改为允许 `NULL`（改为"可选绑定"） |
+| 2 | 新增 `fanverify_uid`（`BIGINT UNSIGNED NULL`）与 `fanverify_verified_at`（`DATETIME NULL`） |
+| 3 | 新增唯一索引 `uk_fanverify_uid` |
+| 4 | 确认唯一索引 `uk_email` 存在（可选绑定同样要唯一，只是允许多个 `NULL`） |
+
+脚本末尾会自检并打印 `email` / `email_verified_at` / `simpass_uid` / `fanverify_uid` / `fanverify_verified_at`
+五个字段的当前状态与三个唯一索引（`uk_email`、`uk_simpass_uid`、`uk_fanverify_uid`）。
+预期结果：`email` 允许 `NULL`，两个 FanVerify 字段已存在，三个唯一索引齐全。
+
+- 已有数据不会被动：升级只是 `ALTER TABLE`，不重建库、不重建账号、不动任何一行数据。
+  存量账号的 `fanverify_uid` 为 `NULL`，即"未绑定"，符合可选绑定语义，无需补数据。
+- ⚠ 与 2.2 节的区别：`bin/init-database.ps1` 是**从零建库**（重建库、账号与全部表），
+  这个升级脚本只改结构。**已经有数据的库请用后者，不要重跑 init 脚本。**
 
 ---
 
@@ -364,8 +395,11 @@ mysql -u root -p < 8w_passport.rendered.sql
 | 登录 | 登录弹窗保留（仍调 `/api/v1/auth.php?action=login`，走 `Auth` 兼容层） |
 
 **用户可见的变化**：全站注册只有一个入口 —— `https://<域名>/passport/`。
-注册需要同时通过邮箱验证码、游戏内玩家名权威校验、简幻通校验；登录后可在通行证中心查看
-账号信息、我的邦国、已授权的第三方应用，并修改密码。改密不再需要简幻通验证码。
+注册**必填**游戏内玩家名（权威接口实时校验）、简幻通ID + 简幻通验证码；
+**可选**验证邮箱 + 邮箱验证码、FanVerify 账号ID + 验证码（注册页上是两个复选框开关，
+勾选才展开对应字段，不勾也能注册成功）。登录后进入通行证中心（左侧导航 + 右侧内容分区）：
+概览、绑定管理、已授权应用、账号安全，管理员额外可见第三方应用管理与接口接入状态。
+可选绑定随时可绑可解，必填绑定（玩家名、简幻通）不可解绑。改密不再需要简幻通验证码。
 
 ---
 
@@ -405,21 +439,31 @@ mysql -u root -p < 8w_passport.rendered.sql
 - [ ] `PASSPORT_ADMIN_ROLES` 已按实际管理员角色配置（默认 `secretary_general`）
 - [ ] `PASSPORT_COOKIE_DOMAIN` 按需配置（留空表示当前域），站点已启用 HTTPS（Cookie 的 `Secure` 由请求协议自动判定）
 
-### 外部接口（四个 TODO 项）
+### 外部接口（五个 TODO 项）
 
-- [ ] 邮箱验证码：`.env` 的 `EMAIL_API_URL`（+ `EMAIL_API_TOKEN` / `EMAIL_API_BODY_TEMPLATE` 等）已配置，
-      且 `/passport/` 的「接口接入状态」显示**已接入**
+其中与**必填绑定**相关的三个（游戏内玩家、简幻通、邦国）不接入会直接挡住注册或查询；
+与**可选绑定**相关的两个（邮箱验证码、FanVerify）不接入只影响"绑定"这一步，
+**不影响注册与登录**——用户不勾选对应的可选绑定即可。
+
 - [ ] 游戏内玩家：`PLAYER_API_BASE` / `PLAYER_API_PATH`（+ 字段路径）已配置，状态显示已接入
+      （**注册必填校验**，未接入时注册会明确 501）
+- [ ] 简幻通：`SIMPASS_API_URL` / `SIMPPASS_ACCESS_TOKEN`（注意变量名是**双 P**）已配置，状态显示已接入
+      （**注册必填校验**，未接入时注册会明确 501）
 - [ ] 邦国信息：`COUNTRY_API_BASE` / `COUNTRY_API_PATH` 已配置；若需要按名称查询，
       必须同时配置 `COUNTRY_API_PATH_BY_NAME`，否则按名称查询会明确报 501
-- [ ] 简幻通：`SIMPASS_API_URL` / `SIMPPASS_ACCESS_TOKEN`（注意变量名是**双 P**）已配置，状态显示已接入
-- [ ] 已知悉：任何一个未接入时，对应功能会返回 **HTTP 501 `not_implemented`** 并给出明确原因，
-      **不会静默放行**；注册链路的校验顺序为 玩家名 → 简幻通 → 邮箱验证码
+- [ ] 邮箱验证码（**可选绑定**）：`.env` 的 `EMAIL_API_URL`（+ `EMAIL_API_TOKEN` / `EMAIL_API_BODY_TEMPLATE` 等）
+      已配置，且 `/passport/` 的「接口接入状态」显示**已接入**
+- [ ] FanVerify（**可选绑定**）：`.env` 的 `FANVERIFY_API_URL`（+ `FANVERIFY_API_TOKEN` / 字段路径）已配置
+- [ ] 已知悉：接口未接入时，对应功能会返回 **HTTP 501 `not_implemented`** 并给出明确原因，
+      **不会静默放行**；注册链路的校验顺序为
+      字段格式 → 唯一性 → 玩家名 → 简幻通 → 邮箱验证码（可选）→ FanVerify（可选）→ 落库
 
 ### 功能验收
 
 - [ ] 用首个管理员通行证（`LouieMAIN`）登录 `/passport/`，**立即修改密码与邮箱**
-- [ ] 完整走一遍注册：邮箱验证码 → 玩家名 → 简幻通 → 自动登录，且邦国信息自动带出
+- [ ] 完整走一遍**必填项**注册：玩家名 → 简幻通 → 自动登录，且邦国信息自动带出
+- [ ] 再走一遍**带可选绑定**的注册（勾选验证邮箱与 FanVerify），确认两项都正确落库
+- [ ] 在 `/passport/` 的「绑定管理」里绑一次邮箱、解一次邮箱，确认每次都要输入当前密码
 - [ ] 修改密码后，其它设备上的登录态被踢下线
 - [ ] 创建测试第三方应用，跑通授权码流程（`/oauth/authorize` → `/oauth/token` → `/oauth/userinfo`）
 - [ ] `client_credentials` 令牌可查 `/passport/api/v1/player` 与 `/passport/api/v1/country`，
