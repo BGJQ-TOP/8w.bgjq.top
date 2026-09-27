@@ -3,6 +3,7 @@
 namespace W8\Passport\Identity;
 
 use Throwable;
+use W8\Passport\Contracts\FanVerifyVerifier;
 use W8\Passport\Contracts\SimpassVerifier;
 use W8\Passport\Directory\CountryDirectory;
 use W8\Passport\Directory\PlayerDirectory;
@@ -12,19 +13,23 @@ use W8\Passport\Support\Config;
 use W8\Passport\Support\Database;
 use W8\Passport\Support\Logger;
 use W8\Passport\Verification\EmailCodeService;
+use W8\Passport\Verification\FanVerifyIdentity;
 
 /**
  * 通行证注册
  *
- * 注册必须同时提供并通过四项校验：
- *   ① 验证邮箱      —— 邮箱验证码（⚠ 发送接口 TODO）
- *   ② 游戏内玩家名  —— 权威接口实时查询，必须是真实存在的玩家（⚠ 查询接口 TODO）
- *   ③ 简幻通ID      —— 简幻通身份校验（⚠ 接口 TODO）
- *   ④ 验证码        —— 简幻通验证码
+ * 注册必填（都要通过外部校验）：
+ *   ① 游戏内玩家名  —— 权威接口实时查询，必须是真实存在的玩家（⚠ 查询接口 TODO）
+ *   ② 简幻通ID      —— 简幻通身份校验（⚠ 接口 TODO）
+ *   ③ 简幻通验证码
+ *
+ * 注册可选（用户自己决定绑不绑）：
+ *   ④ 验证邮箱 + 邮箱验证码（⚠ 邮件接口 TODO）
+ *   ⑤ FanVerify 账号ID + 验证码（⚠ 接口 TODO）
  *
  * 校验顺序刻意从"最可能失败、最贵"到"最便宜、一次性"：
- * 玩家 → 简幻通 → 邮箱验证码。
- * 邮箱验证码放最后，是为了不在前两项失败时白白烧掉一个验证码。
+ * 玩家 → 简幻通 → 邮箱 → FanVerify。
+ * 邮箱验证码放后面，是为了不在前两项失败时白白烧掉一个验证码。
  */
 final class RegistrationService
 {
@@ -46,6 +51,9 @@ final class RegistrationService
     /** @var SimpassVerifier */
     private $simpass;
 
+    /** @var FanVerifyVerifier */
+    private $fanVerify;
+
     /** @var Config */
     private $config;
 
@@ -59,6 +67,7 @@ final class RegistrationService
         CountryDirectory $countries,
         EmailCodeService $emailCodes,
         SimpassVerifier $simpass,
+        FanVerifyVerifier $fanVerify,
         Config $config,
         Logger $logger
     ) {
@@ -68,6 +77,7 @@ final class RegistrationService
         $this->countries = $countries;
         $this->emailCodes = $emailCodes;
         $this->simpass = $simpass;
+        $this->fanVerify = $fanVerify;
         $this->config = $config;
         $this->logger = $logger;
     }
@@ -83,17 +93,25 @@ final class RegistrationService
     {
         $username   = trim((string) $this->value($input, 'username'));
         $password   = (string) $this->value($input, 'password');
-        $email      = strtolower(trim((string) $this->value($input, 'email')));
-        $emailCode  = trim((string) $this->value($input, 'email_code'));
         $playerName = trim((string) $this->value($input, 'player_name'));
         $simpassUid = (int) $this->value($input, 'simpass_uid', 0);
         $simpassCode = trim((string) $this->value($input, 'simpass_code'));
 
+        // 可选绑定
+        $email      = strtolower(trim((string) $this->value($input, 'email')));
+        $emailCode  = trim((string) $this->value($input, 'email_code'));
+        $fanverifyUid = (int) $this->value($input, 'fanverify_uid', 0);
+        $fanverifyCode = trim((string) $this->value($input, 'fanverify_code'));
+
         // ---------- ① 字段格式 ----------
         $this->assertUsername($username);
-        $this->assertEmail($email);
         $this->assertPlayerName($playerName);
         $this->assertPassword($password);
+
+        // 邮箱只在填了的时候才校验格式
+        if ($email !== '') {
+            $this->assertEmail($email);
+        }
 
         if ($simpassUid <= 0) {
             throw ApiException::validation('请填写正确的简幻通ID', array('field' => 'simpass_uid'));
@@ -106,7 +124,7 @@ final class RegistrationService
         if ($this->accounts->findByUsername($username) !== null) {
             throw ApiException::conflict('该用户名已被注册', array('field' => 'username'));
         }
-        if ($this->accounts->findByEmail($email) !== null) {
+        if ($email !== '' && $this->accounts->findByEmail($email) !== null) {
             throw ApiException::conflict('该邮箱已被注册', array('field' => 'email'));
         }
         if ($this->accounts->findByPlayerName($playerName) !== null) {
@@ -115,32 +133,49 @@ final class RegistrationService
         if ($this->accounts->findBySimpassUid($simpassUid) !== null) {
             throw ApiException::conflict('该简幻通ID已被绑定', array('field' => 'simpass_uid'));
         }
+        if ($fanverifyUid > 0 && $this->accounts->findByFanverifyUid($fanverifyUid) !== null) {
+            throw ApiException::conflict('该 FanVerify 账号已被绑定', array('field' => 'fanverify_uid'));
+        }
 
         // ---------- ③ 游戏内玩家名：走权威接口实时校验 ----------
         $player = $this->resolvePlayer($playerName);
 
-        // ---------- ④ 简幻通身份 ----------
+        // ---------- ④ 简幻通身份（必填）----------
         $identity = $this->resolveSimpass($simpassUid, $simpassCode, $playerName);
 
-        // ---------- ⑤ 邮箱验证码（放最后，避免白白烧掉）----------
-        $this->resolveEmail($email, $emailCode);
+        // ---------- ⑤ 邮箱验证码（可选）----------
+        $emailBound = $this->resolveOptionalEmail($email, $emailCode);
 
-        // ---------- ⑥ 落库 ----------
-        $accountId = $this->db->transaction(function () use ($username, $password, $email, $player, $identity) {
+        // ---------- ⑥ FanVerify（可选）----------
+        $fanverifyIdentity = $this->resolveOptionalFanVerify($fanverifyUid, $fanverifyCode, $playerName);
+
+        // ---------- ⑦ 落库 ----------
+        $now = date('Y-m-d H:i:s');
+        $accountId = $this->db->transaction(function () use (
+            $username, $password, $email, $emailBound, $player, $identity, $fanverifyIdentity, $now
+        ) {
             return $this->accounts->create(array(
-                'username'            => $username,
-                'email'               => $email,
-                'email_verified_at'   => date('Y-m-d H:i:s'),
-                'password_hash'       => password_hash($password, PASSWORD_DEFAULT),
-                'simpass_uid'         => $identity->uid(),
-                'simpass_level'       => $identity->level(),
-                'simpass_verified_at' => date('Y-m-d H:i:s'),
-                'player_name'         => $player->name(),
-                'player_id'           => $player->id(),
-                'country_id'          => $player->countryId(),
-                'player_synced_at'    => date('Y-m-d H:i:s'),
-                'role'                => 'observer',
-                'status'              => Account::STATUS_ACTIVE,
+                'username'              => $username,
+                'password_hash'         => password_hash($password, PASSWORD_DEFAULT),
+
+                // 可选绑定：未绑定时落 NULL，而不是空串
+                'email'                 => $emailBound ? $email : null,
+                'email_verified_at'     => $emailBound ? $now : null,
+                'fanverify_uid'         => $fanverifyIdentity !== null ? $fanverifyIdentity->uid() : null,
+                'fanverify_verified_at' => $fanverifyIdentity !== null ? $now : null,
+
+                // 必填绑定
+                'simpass_uid'           => $identity->uid(),
+                'simpass_level'         => $identity->level(),
+                'simpass_verified_at'   => $now,
+
+                'player_name'           => $player->name(),
+                'player_id'             => $player->id(),
+                'country_id'            => $player->countryId(),
+                'player_synced_at'      => $now,
+
+                'role'                  => 'observer',
+                'status'                => Account::STATUS_ACTIVE,
             ));
         });
 
@@ -208,20 +243,65 @@ final class RegistrationService
     }
 
     /**
-     * 邮箱验证码校验
+     * 邮箱验证码校验（可选绑定）
+     *
+     * 用户没填邮箱就跳过，账号的 email 落 NULL。
+     * 填了邮箱则验证码必填 —— 否则等于绑了一个未验证的邮箱。
+     *
+     * @param string $email
+     * @param string $emailCode
+     * @return bool 是否绑定了邮箱
      */
-    private function resolveEmail($email, $emailCode)
+    private function resolveOptionalEmail($email, $emailCode)
     {
-        if (!$this->verificationEnabled()) {
-            $this->logger->warning('passport.verification_bypassed', array('step' => 'email'));
-            return;
+        if ($email === '') {
+            return false;
         }
 
         if ($emailCode === '') {
-            throw ApiException::validation('请填写邮箱验证码', array('field' => 'email_code'));
+            throw ApiException::validation('填写了邮箱就必须填写邮箱验证码', array('field' => 'email_code'));
+        }
+
+        if (!$this->verificationEnabled()) {
+            $this->logger->warning('passport.verification_bypassed', array('step' => 'email'));
+            return true;
         }
 
         $this->emailCodes->assertVerify($email, 'register', $emailCode);
+
+        return true;
+    }
+
+    /**
+     * FanVerify 校验（可选绑定）
+     *
+     * ⚠ TODO：FANVERIFY_API_URL 未配置时会抛 501 not_implemented。
+     * 注意这是**可选**绑定，所以未接入不会挡住注册 —— 只要用户不填就行。
+     *
+     * @param int $fanverifyUid
+     * @param string $fanverifyCode
+     * @param string $playerName
+     * @return FanVerifyIdentity|null
+     */
+    private function resolveOptionalFanVerify($fanverifyUid, $fanverifyCode, $playerName)
+    {
+        if ($fanverifyUid <= 0 && $fanverifyCode === '') {
+            return null;
+        }
+
+        if ($fanverifyUid <= 0) {
+            throw ApiException::validation('请填写正确的 FanVerify 账号ID', array('field' => 'fanverify_uid'));
+        }
+        if ($fanverifyCode === '') {
+            throw ApiException::validation('请填写 FanVerify 验证码', array('field' => 'fanverify_code'));
+        }
+
+        if (!$this->verificationEnabled()) {
+            $this->logger->warning('passport.verification_bypassed', array('step' => 'fanverify'));
+            return new FanVerifyIdentity($fanverifyUid, null);
+        }
+
+        return $this->fanVerify->verify($fanverifyUid, $fanverifyCode, $playerName);
     }
 
     /**

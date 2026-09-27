@@ -17,7 +17,11 @@ Endpoint::run(function (Request $request, Application $app) {
     $account = $app->authenticator()->requireCurrent($request);
     $app->markApiContext(null, $account->id());
 
-    $data = array('account' => $account->toPublicArray());
+    $data = array(
+        'account'  => $account->toPublicArray(),
+        // 绑定全景：哪些已绑、哪些能绑、接口是否已接入，前端一次拿全
+        'bindings' => $app->bindings()->describe($account),
+    );
 
     // 玩家信息（权威缓存）
     $player = $app->players()->findCached($account->playerName());

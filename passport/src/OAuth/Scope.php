@@ -16,10 +16,11 @@ final class Scope
      */
     const MAP = array(
         'basic'          => '通行证UID、用户名、站内角色',
-        'email'          => '验证邮箱与邮箱验证状态',
+        'email'          => '验证邮箱与邮箱验证状态（未绑定时不返回该字段）',
         'player'         => '游戏内玩家名、玩家ID、所属邦国ID',
         'country'        => '所属邦国ID（与 player 重复，供只关心邦国的应用使用）',
         'simpass'        => '简幻通ID与等级',
+        'fanverify'      => 'FanVerify 账号ID（未绑定时不返回该字段）',
         'offline_access' => '刷新令牌到期后仍可继续换取新的刷新令牌（不申请则只能刷新一次）',
         'directory'      => '查询游戏内玩家与邦国公开信息（机器对机器）',
     );

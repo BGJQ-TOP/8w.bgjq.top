@@ -55,21 +55,31 @@ SET FOREIGN_KEY_CHECKS = 1;
 -- ----------------------------------------------------------------------------
 --  1.1 passport_accounts —— 通行证账号（全局唯一身份主体）
 --      第三方拿到的 user_id 就是这里的 id，对应 OAuth2 的 sub。
---      游戏内数据说明：玩家名是权威主键，player_id / country_id 是权威缓存。
+--
+--      绑定策略：
+--        · 必填且不可解绑：游戏内玩家名、简幻通ID —— 简幻通是默认的找回通道
+--        · 可选绑定：验证邮箱、FanVerify 账号 —— 用户自行决定绑不绑
+--      因此 email / fanverify_* 全部允许为 NULL，且唯一索引允许多个 NULL。
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `passport_accounts` (
     `id`                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '通行证UID（对外唯一标识 / OAuth2 sub）',
     `username`            VARCHAR(32)     NOT NULL                COMMENT '通行证用户名（登录用）',
-    `email`               VARCHAR(191)    NOT NULL                COMMENT '验证邮箱（登录/找回用）',
-    `email_verified_at`   DATETIME        NULL                    COMMENT '邮箱验证通过时间，NULL 表示未验证',
     `password_hash`       VARCHAR(255)    NOT NULL                COMMENT '密码哈希（password_hash / PASSWORD_DEFAULT）',
 
-    -- 简幻通身份（TODO：接口待对接，见 passport/src/Verification/）
-    `simpass_uid`         BIGINT UNSIGNED NULL                    COMMENT '简幻通ID',
+    -- 可选绑定：验证邮箱
+    `email`               VARCHAR(191)    NULL                    COMMENT '验证邮箱（可选绑定；NULL = 未绑定）',
+    `email_verified_at`   DATETIME        NULL                    COMMENT '邮箱验证通过时间，NULL 表示未绑定或未验证',
+
+    -- 必填绑定：简幻通身份（TODO：接口待对接，见 passport/src/Verification/）
+    `simpass_uid`         BIGINT UNSIGNED NULL                    COMMENT '简幻通ID（注册必填）',
     `simpass_level`       TINYINT UNSIGNED NULL                   COMMENT '简幻通等级',
     `simpass_verified_at` DATETIME        NULL                    COMMENT '简幻通验证通过时间',
 
-    -- 游戏内玩家身份（权威第三方提供；玩家名为权威主键，其余为缓存）
+    -- 可选绑定：FanVerify 账号（TODO：接口待对接）
+    `fanverify_uid`         BIGINT UNSIGNED NULL                  COMMENT 'FanVerify 账号ID（可选绑定；NULL = 未绑定）',
+    `fanverify_verified_at` DATETIME        NULL                  COMMENT 'FanVerify 验证通过时间',
+
+    -- 必填绑定：游戏内玩家身份（权威第三方提供；玩家名为权威主键，其余为缓存）
     `player_name`         VARCHAR(32)     NOT NULL                COMMENT '游戏内玩家名（权威主键）',
     `player_id`           BIGINT UNSIGNED NULL                    COMMENT '游戏内玩家ID（权威缓存）',
     `country_id`          BIGINT UNSIGNED NULL                    COMMENT '玩家所属邦国ID（权威缓存）',
@@ -84,10 +94,12 @@ CREATE TABLE IF NOT EXISTS `passport_accounts` (
     `updated_at`          DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_username`    (`username`),
-    UNIQUE KEY `uk_email`       (`email`),
-    UNIQUE KEY `uk_player_name` (`player_name`),
-    UNIQUE KEY `uk_simpass_uid` (`simpass_uid`),
+    UNIQUE KEY `uk_username`     (`username`),
+    -- 唯一索引允许多个 NULL，所以"可选绑定"不会互相冲突
+    UNIQUE KEY `uk_email`        (`email`),
+    UNIQUE KEY `uk_simpass_uid`  (`simpass_uid`),
+    UNIQUE KEY `uk_fanverify_uid`(`fanverify_uid`),
+    UNIQUE KEY `uk_player_name`  (`player_name`),
     KEY `idx_country`   (`country_id`),
     KEY `idx_status`    (`status`),
     KEY `idx_role`      (`role`)

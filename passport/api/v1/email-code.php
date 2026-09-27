@@ -9,6 +9,10 @@
  *   只差 Verification\HttpEmailVerifier 里的"发出去"这一步（由 .env 的 EMAIL_API_URL 驱动）。
  *
  * 请求体：{"email":"a@b.com","scene":"register"}
+ *   scene 取值：
+ *     register  注册时绑定邮箱（默认）
+ *     bind      登录后补绑邮箱
+ *     reset     找回密码（接口接入后启用）
  */
 
 require_once __DIR__ . '/../../src/bootstrap.php';

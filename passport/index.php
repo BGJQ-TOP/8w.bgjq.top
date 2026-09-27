@@ -3,8 +3,8 @@
  * 8W通行证 —— 用户中心
  *
  * 未登录：登录 / 注册
- * 已登录：账号信息、绑定的游戏内玩家、所属邦国、已授权应用、改密码
- * 管理员：第三方应用管理（API 分发）
+ * 已登录：账号概览、绑定管理（邮箱 / FanVerify 可选绑定）、已授权应用、修改密码
+ * 管理员：第三方应用管理（API 分发）、接口接入状态
  *
  * 所有数据操作都走 /passport/api/v1/*，本文件只负责渲染与交互。
  */
@@ -23,31 +23,50 @@ function h($value)
     return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
 }
 
+/**
+ * 取字符串第一个字符（UTF-8 安全，不依赖 mbstring）
+ */
+function initial($value)
+{
+    $value = trim((string) $value);
+    if ($value === '') {
+        return '?';
+    }
+    if (preg_match('/./us', $value, $m) === 1) {
+        return h(strtoupper($m[0]));
+    }
+    return h(strtoupper(substr($value, 0, 1)));
+}
+
 $app = Application::instance();
 $request = Request::fromGlobals();
 
 $account = null;
+$fatal = null;
+
 try {
     $account = $app->authenticator()->current($request);
 } catch (Throwable $e) {
-    // 数据库不可用时也要能渲染出页面并给出明确提示
+    // 数据库不可用时也要能渲染页面并给出明确提示
     $fatal = $e->getMessage();
 }
 
+// 只允许站内相对路径，防开放重定向
 $returnTo = (string) $request->query('return', '');
 if ($returnTo !== '' && (strpos($returnTo, '/') !== 0 || strpos($returnTo, '//') === 0)) {
-    // 只允许站内相对路径，防开放重定向
     $returnTo = '';
 }
 
 $adminRoles = array_filter(array_map('trim', explode(',', $app->config()->getString('PASSPORT_ADMIN_ROLES', 'secretary_general'))));
 $isAdmin = $account !== null && in_array($account->role(), $adminRoles, true);
 
+// 接口接入状态（管理员可见）：判定依据是各数据源的 isConfigured()
 $interfaceStatus = array(
-    array('邮箱验证码接口', $app->emailVerifier()->isConfigured(), 'EMAIL_API_URL'),
-    array('游戏内玩家接口', $app->playerProvider()->isConfigured(), 'PLAYER_API_BASE'),
-    array('邦国信息接口', $app->countryProvider()->isConfigured(), 'COUNTRY_API_BASE'),
-    array('简幻通接口', $app->simpassVerifier()->isConfigured(), 'SIMPASS_API_URL'),
+    array('游戏内玩家', $app->playerProvider()->isConfigured(), 'PLAYER_API_BASE', true),
+    array('简幻通', $app->simpassVerifier()->isConfigured(), 'SIMPASS_API_URL', true),
+    array('邮箱验证码', $app->emailVerifier()->isConfigured(), 'EMAIL_API_URL', false),
+    array('FanVerify', $app->fanVerifyVerifier()->isConfigured(), 'FANVERIFY_API_URL', false),
+    array('邦国信息', $app->countryProvider()->isConfigured(), 'COUNTRY_API_BASE', false),
 );
 
 $scopes = Scope::describe();
@@ -56,266 +75,487 @@ $scopes = Scope::describe();
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>8W通行证</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#4A7DB5">
+<title>8W通行证<?php echo $account !== null ? ' · ' . h($account->username()) : ''; ?></title>
+<link rel="icon" href="/images/favicon.ico">
 <link rel="stylesheet" href="/passport/assets/passport.css">
 </head>
 <body class="w8-passport">
-<div class="w8-wrap<?php echo $account === null ? ' w8-wrap--narrow' : ''; ?>">
 
-    <header class="w8-header">
-        <a class="w8-brand" href="/passport/">
-            <span class="w8-brand__mark">8W</span>
-            <span>8W通行证</span>
-        </a>
-        <p class="w8-tagline">8W社区统一身份服务 · 一次注册，全站通用</p>
+<div class="w8-shell">
+
+    <header class="w8-topbar">
+        <div class="w8-topbar__inner">
+            <a class="w8-brand" href="/passport/">
+                <span class="w8-brand__mark">8W</span>
+                <span>
+                    8W通行证
+                    <span class="w8-brand__sub">8W社区统一身份服务</span>
+                </span>
+            </a>
+
+<?php if ($account !== null): ?>
+            <div class="w8-userchip">
+                <span class="w8-userchip__name"><?php echo h($account->username()); ?></span>
+                <span class="w8-avatar" aria-hidden="true"><?php echo initial($account->username()); ?></span>
+            </div>
+<?php else: ?>
+            <a class="w8-btn w8-btn--ghost w8-btn--sm" href="/">返回社区</a>
+<?php endif; ?>
+        </div>
     </header>
 
-<?php if (isset($fatal)): ?>
-    <div class="w8-card">
-        <div class="w8-alert w8-alert--error">
-            通行证服务暂时不可用：<?php echo h($fatal); ?><br>
-            请确认数据库已按 <code>database/8w_passport.sql</code> 初始化，且 .env 配置正确。
+<?php if ($fatal !== null): ?>
+
+    <main class="w8-main w8-main--narrow">
+        <div class="w8-card">
+            <div class="w8-card__body">
+                <div class="w8-alert w8-alert--error">
+                    <span class="w8-alert__icon" aria-hidden="true">!</span>
+                    <div class="w8-alert__body">
+                        <strong>通行证服务暂时不可用</strong><br>
+                        <?php echo h($fatal); ?><br><br>
+                        请确认数据库已按 <code>database/8w_passport.sql</code> 初始化，且 <code>.env</code> 配置正确。
+                    </div>
+                </div>
+            </div>
         </div>
-    </div>
+    </main>
+
 <?php elseif ($account === null): ?>
 
-    <div class="w8-card">
-        <div class="w8-tabs">
-            <div class="w8-tab w8-tab--active" id="tab-login" data-panel="panel-login">登录</div>
-            <div class="w8-tab" id="tab-register" data-panel="panel-register">注册</div>
+    <!-- ==================== 未登录：登录 / 注册 ==================== -->
+    <main class="w8-main w8-main--narrow">
+        <div class="w8-card w8-card--hero">
+            <div class="w8-card__body">
+
+                <div class="w8-tabs" role="tablist">
+                    <button type="button" class="w8-tab w8-tab--active" id="tab-login"
+                            role="tab" aria-selected="true" aria-controls="panel-login" data-panel="panel-login">登录</button>
+                    <button type="button" class="w8-tab" id="tab-register"
+                            role="tab" aria-selected="false" aria-controls="panel-register" data-panel="panel-register">注册</button>
+                </div>
+
+                <!-- ---------- 登录 ---------- -->
+                <div class="w8-panel" id="panel-login" role="tabpanel" aria-labelledby="tab-login">
+                    <div class="w8-alert w8-alert--error" id="login-error" role="alert" hidden></div>
+
+                    <form id="form-login" novalidate>
+                        <div class="w8-field">
+                            <label class="w8-label" for="login-identifier">用户名或邮箱</label>
+                            <input class="w8-input" type="text" id="login-identifier" name="identifier"
+                                   autocomplete="username" autocapitalize="none" spellcheck="false"
+                                   placeholder="输入用户名或已绑定的邮箱" required>
+                        </div>
+
+                        <div class="w8-field">
+                            <label class="w8-label" for="login-password">密码</label>
+                            <div class="w8-password">
+                                <input class="w8-input" type="password" id="login-password" name="password"
+                                       autocomplete="current-password" placeholder="输入密码" required>
+                                <button type="button" class="w8-password__toggle" data-toggle-password="login-password"
+                                        aria-label="显示密码">👁</button>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="w8-btn w8-btn--lg w8-btn--block">登录</button>
+                    </form>
+
+                    <p class="w8-consent__footnote">
+                        登录即表示同意 8W社区的相关约定。<br>
+                        忘记密码？请通过简幻通联系社区管理员。
+                    </p>
+                </div>
+
+                <!-- ---------- 注册 ---------- -->
+                <div class="w8-panel" id="panel-register" role="tabpanel" aria-labelledby="tab-register" hidden>
+                    <div class="w8-alert w8-alert--error" id="register-error" role="alert" hidden></div>
+
+                    <form id="form-register" novalidate>
+                        <div class="w8-field">
+                            <label class="w8-label" for="reg-username">通行证用户名</label>
+                            <input class="w8-input" type="text" id="reg-username" name="username"
+                                   autocomplete="username" autocapitalize="none" spellcheck="false"
+                                   placeholder="3-32 位字母、数字、下划线或短横线" required>
+                        </div>
+
+                        <div class="w8-field">
+                            <label class="w8-label" for="reg-password">密码</label>
+                            <div class="w8-password">
+                                <input class="w8-input" type="password" id="reg-password" name="password"
+                                       autocomplete="new-password" placeholder="至少 8 位" required>
+                                <button type="button" class="w8-password__toggle" data-toggle-password="reg-password"
+                                        aria-label="显示密码">👁</button>
+                            </div>
+                            <div class="w8-meter" id="pw-meter" aria-hidden="true">
+                                <span class="w8-meter__bar"></span>
+                                <span class="w8-meter__bar"></span>
+                                <span class="w8-meter__bar"></span>
+                                <span class="w8-meter__bar"></span>
+                                <span class="w8-meter__text"></span>
+                            </div>
+                            <span class="w8-hint">至少 8 位，不能是纯字母或纯数字。</span>
+                        </div>
+
+                        <div class="w8-field">
+                            <label class="w8-label" for="reg-player">游戏内玩家名</label>
+                            <input class="w8-input" type="text" id="reg-player" name="player_name"
+                                   autocapitalize="none" spellcheck="false"
+                                   placeholder="必须与服务器内完全一致" required>
+                            <span class="w8-hint">提交时会调用权威接口实时校验，所属邦国自动识别，无需手工选择。</span>
+                        </div>
+
+                        <div class="w8-field">
+                            <label class="w8-label" for="reg-simpass-uid">简幻通ID</label>
+                            <input class="w8-input" type="text" id="reg-simpass-uid" name="simpass_uid"
+                                   inputmode="numeric" autocomplete="off" placeholder="简幻通用户ID" required>
+                        </div>
+
+                        <div class="w8-field">
+                            <label class="w8-label" for="reg-simpass-code">简幻通验证码</label>
+                            <input class="w8-input" type="text" id="reg-simpass-code" name="simpass_code"
+                                   inputmode="numeric" autocomplete="one-time-code" maxlength="8"
+                                   placeholder="在小程序内获取" required>
+                        </div>
+
+                        <!-- ---------- 可选绑定 ---------- -->
+                        <div class="w8-card__head" style="padding:0 0 12px; border-bottom:none; margin-top:24px;">
+                            <div>
+                                <div class="w8-card__title">可选绑定</div>
+                                <div class="w8-card__sub">现在不绑也能注册，之后随时可以在通行证中心补绑或解绑。</div>
+                            </div>
+                        </div>
+
+                        <div class="w8-stack w8-stack--tight w8-mb-4">
+                            <label class="w8-check">
+                                <input type="checkbox" id="opt-email">
+                                <span class="w8-check__text">
+                                    <strong>绑定验证邮箱</strong>
+                                    <span id="opt-email-note">用于接收通知与找回密码</span>
+                                </span>
+                            </label>
+                            <label class="w8-check">
+                                <input type="checkbox" id="opt-fanverify">
+                                <span class="w8-check__text">
+                                    <strong>绑定 FanVerify 账号</strong>
+                                    <span id="opt-fanverify-note">可选的身份凭据</span>
+                                </span>
+                            </label>
+                        </div>
+
+                        <div id="block-email" hidden>
+                            <div class="w8-field">
+                                <label class="w8-label" for="reg-email">验证邮箱</label>
+                                <div class="w8-inputgroup">
+                                    <input class="w8-input" type="email" id="reg-email" name="email"
+                                           autocomplete="email" autocapitalize="none" spellcheck="false"
+                                           placeholder="you@example.com">
+                                    <button type="button" class="w8-btn w8-btn--ghost" id="btn-email-code">获取验证码</button>
+                                </div>
+                                <span class="w8-hint" id="email-code-hint">验证码将发送到该邮箱，10 分钟内有效。</span>
+                            </div>
+                            <div class="w8-field">
+                                <label class="w8-label" for="reg-email-code">邮箱验证码</label>
+                                <input class="w8-input" type="text" id="reg-email-code" name="email_code"
+                                       inputmode="numeric" autocomplete="one-time-code" maxlength="6"
+                                       placeholder="6 位数字">
+                            </div>
+                        </div>
+
+                        <div id="block-fanverify" hidden>
+                            <div class="w8-field">
+                                <label class="w8-label" for="reg-fanverify-uid">FanVerify 账号ID</label>
+                                <input class="w8-input" type="text" id="reg-fanverify-uid" name="fanverify_uid"
+                                       inputmode="numeric" autocomplete="off" placeholder="FanVerify 账号ID">
+                            </div>
+                            <div class="w8-field">
+                                <label class="w8-label" for="reg-fanverify-code">FanVerify 验证码</label>
+                                <input class="w8-input" type="text" id="reg-fanverify-code" name="fanverify_code"
+                                       inputmode="numeric" autocomplete="one-time-code" maxlength="8"
+                                       placeholder="在 FanVerify 内获取">
+                            </div>
+                        </div>
+
+                        <button type="submit" class="w8-btn w8-btn--lg w8-btn--block w8-mt-5">注册并登录</button>
+                    </form>
+                </div>
+
+            </div>
         </div>
 
-        <!-- ================= 登录 ================= -->
-        <div id="panel-login">
-            <div class="w8-alert w8-alert--error" id="login-error" hidden></div>
-            <form id="form-login" autocomplete="on">
-                <div class="w8-field">
-                    <label for="login-identifier">用户名或邮箱</label>
-                    <input class="w8-input" type="text" id="login-identifier" name="identifier"
-                           autocomplete="username" required>
-                </div>
-                <div class="w8-field">
-                    <label for="login-password">密码</label>
-                    <input class="w8-input" type="password" id="login-password" name="password"
-                           autocomplete="current-password" required>
-                </div>
-                <button type="submit" class="w8-btn w8-btn--block">登录</button>
-            </form>
+        <div class="w8-footer">
+            8W通行证 · <a href="/">返回 8W社区</a>
         </div>
-
-        <!-- ================= 注册 ================= -->
-        <div id="panel-register" hidden>
-            <p class="w8-card__sub">
-                注册需要同时验证：邮箱、游戏内玩家名、简幻通身份。
-                玩家名会通过权威接口实时校验，请填写服务器内的准确玩家名。
-            </p>
-
-            <div class="w8-alert w8-alert--error" id="register-error" hidden></div>
-            <div class="w8-alert w8-alert--success" id="register-ok" hidden></div>
-
-            <form id="form-register" autocomplete="off">
-                <div class="w8-field">
-                    <label for="reg-username">通行证用户名</label>
-                    <input class="w8-input" type="text" id="reg-username" name="username"
-                           placeholder="3-32 位字母、数字、下划线或短横线" required>
-                </div>
-
-                <div class="w8-field">
-                    <label for="reg-password">密码</label>
-                    <input class="w8-input" type="password" id="reg-password" name="password"
-                           placeholder="至少 8 位，不能是纯字母或纯数字" required>
-                </div>
-
-                <div class="w8-field">
-                    <label for="reg-email">验证邮箱</label>
-                    <div class="w8-row">
-                        <input class="w8-input" type="email" id="reg-email" name="email"
-                               placeholder="you@example.com" required>
-                        <button type="button" class="w8-btn w8-btn--ghost" id="btn-email-code">获取验证码</button>
-                    </div>
-                    <span class="w8-hint" id="email-code-hint">验证码将发送到该邮箱，10 分钟内有效。</span>
-                </div>
-
-                <div class="w8-field">
-                    <label for="reg-email-code">邮箱验证码</label>
-                    <input class="w8-input" type="text" id="reg-email-code" name="email_code"
-                           inputmode="numeric" maxlength="6" placeholder="6 位数字" required>
-                </div>
-
-                <div class="w8-field">
-                    <label for="reg-player">游戏内玩家名</label>
-                    <input class="w8-input" type="text" id="reg-player" name="player_name"
-                           placeholder="必须与服务器内完全一致" required>
-                    <span class="w8-hint">提交时会调用权威接口校验，所属邦国自动识别，无需手工选择。</span>
-                </div>
-
-                <div class="w8-field">
-                    <label for="reg-simpass-uid">简幻通ID</label>
-                    <input class="w8-input" type="text" id="reg-simpass-uid" name="simpass_uid"
-                           inputmode="numeric" placeholder="简幻通用户ID" required>
-                </div>
-
-                <div class="w8-field">
-                    <label for="reg-simpass-code">简幻通验证码</label>
-                    <input class="w8-input" type="text" id="reg-simpass-code" name="simpass_code"
-                           inputmode="numeric" placeholder="在小程序内获取" required>
-                </div>
-
-                <button type="submit" class="w8-btn w8-btn--block">注册并登录</button>
-            </form>
-        </div>
-    </div>
+    </main>
 
 <?php else: ?>
 
-    <div class="w8-card">
-        <h1 class="w8-card__title">你好，<?php echo h($account->username()); ?></h1>
-        <p class="w8-card__sub">通行证 UID <code class="w8-mono"><?php echo (int) $account->id(); ?></code></p>
+    <!-- ==================== 已登录：用户中心 ==================== -->
+    <main class="w8-main">
+        <div class="w8-dashboard">
 
-        <table class="w8-kv">
-            <tr><th>邮箱</th>
-                <td><?php echo h($account->email()); ?>
-                    <?php if ($account->isEmailVerified()): ?>
-                        <span class="w8-muted">（已验证）</span>
-                    <?php else: ?>
-                        <span class="w8-muted">（未验证）</span>
-                    <?php endif; ?>
-                </td></tr>
-            <tr><th>游戏内玩家名</th><td><?php echo h($account->playerName()); ?></td></tr>
-            <tr><th>玩家ID</th><td><?php echo $account->playerId() !== null ? (int) $account->playerId() : '<span class="w8-muted">待同步</span>'; ?></td></tr>
-            <tr><th>所属邦国ID</th><td id="cell-country"><?php echo $account->countryId() !== null ? (int) $account->countryId() : '<span class="w8-muted">无</span>'; ?></td></tr>
-            <tr><th>简幻通ID</th><td><?php echo $account->simpassUid() !== null ? (int) $account->simpassUid() : '<span class="w8-muted">未绑定</span>'; ?></td></tr>
-            <tr><th>站内角色</th><td><?php echo h($account->role()); ?></td></tr>
-            <tr><th>注册时间</th><td><?php echo h((string) $account->createdAt()); ?></td></tr>
-        </table>
+            <nav class="w8-nav" aria-label="通行证导航">
+                <a class="w8-nav__item w8-nav__item--active" href="#overview">
+                    <span class="w8-nav__icon" aria-hidden="true">◈</span>概览
+                </a>
+                <a class="w8-nav__item" href="#bindings">
+                    <span class="w8-nav__icon" aria-hidden="true">⛓</span>绑定管理
+                </a>
+                <a class="w8-nav__item" href="#apps">
+                    <span class="w8-nav__icon" aria-hidden="true">◎</span>已授权应用
+                </a>
+                <a class="w8-nav__item" href="#security">
+                    <span class="w8-nav__icon" aria-hidden="true">⚿</span>账号安全
+                </a>
+<?php if ($isAdmin): ?>
+                <a class="w8-nav__item" href="#clients">
+                    <span class="w8-nav__icon" aria-hidden="true">⚙</span>第三方应用
+                </a>
+                <a class="w8-nav__item" href="#interfaces">
+                    <span class="w8-nav__icon" aria-hidden="true">⇄</span>接口状态
+                </a>
+<?php endif; ?>
+                <a class="w8-nav__item" href="/">
+                    <span class="w8-nav__icon" aria-hidden="true">←</span>返回社区
+                </a>
+            </nav>
 
-        <div class="w8-actions">
-            <a class="w8-btn w8-btn--ghost" href="/">返回社区首页</a>
-            <button type="button" class="w8-btn w8-btn--ghost" id="btn-logout">退出登录</button>
-        </div>
-    </div>
+            <div class="w8-stack">
 
-    <!-- ============ 邦国信息（权威缓存） ============ -->
-    <div class="w8-card">
-        <h2 class="w8-card__title">我的邦国</h2>
-        <p class="w8-card__sub">以下数据来自权威接口的本地缓存，点击可强制同步一次。</p>
-        <div id="country-box">
-            <p class="w8-muted">加载中…</p>
-        </div>
-        <div class="w8-actions">
-            <button type="button" class="w8-btn w8-btn--ghost w8-btn--sm" id="btn-refresh-country">强制同步邦国数据</button>
-            <button type="button" class="w8-btn w8-btn--ghost w8-btn--sm" id="btn-refresh-player">强制同步玩家数据</button>
-        </div>
-    </div>
+                <!-- ---------- 概览 ---------- -->
+                <section class="w8-card" id="overview">
+                    <div class="w8-card__head">
+                        <div>
+                            <div class="w8-card__title">账号概览</div>
+                            <div class="w8-card__sub">通行证 UID <code><?php echo (int) $account->id(); ?></code></div>
+                        </div>
+                        <button type="button" class="w8-btn w8-btn--ghost w8-btn--sm" id="btn-logout">退出登录</button>
+                    </div>
+                    <div class="w8-card__body">
+                        <table class="w8-kv">
+                            <tr>
+                                <th>用户名</th>
+                                <td><?php echo h($account->username()); ?></td>
+                            </tr>
+                            <tr>
+                                <th>游戏内玩家</th>
+                                <td><?php echo h($account->playerName()); ?></td>
+                            </tr>
+                            <tr>
+                                <th>玩家ID</th>
+                                <td><?php echo $account->playerId() !== null ? (int) $account->playerId() : '<span class="w8-muted">待同步</span>'; ?></td>
+                            </tr>
+                            <tr>
+                                <th>所属邦国</th>
+                                <td id="cell-country"><?php echo $account->countryId() !== null ? (int) $account->countryId() : '<span class="w8-muted">无</span>'; ?></td>
+                            </tr>
+                            <tr>
+                                <th>站内角色</th>
+                                <td><span class="w8-badge w8-badge--info"><?php echo h($account->role()); ?></span></td>
+                            </tr>
+                            <tr>
+                                <th>注册时间</th>
+                                <td><?php echo h((string) $account->createdAt()); ?></td>
+                            </tr>
+                        </table>
 
-    <!-- ============ 已授权应用 ============ -->
-    <div class="w8-card">
-        <h2 class="w8-card__title">已授权的第三方应用</h2>
-        <p class="w8-card__sub">第三方应用通过 8W通行证登录后，会出现在这里。你可以随时撤销授权。</p>
-        <div id="apps-box"><p class="w8-muted">加载中…</p></div>
-    </div>
+                        <div class="w8-cluster w8-mt-5">
+                            <button type="button" class="w8-btn w8-btn--ghost w8-btn--sm" id="btn-refresh-player">同步玩家数据</button>
+                            <button type="button" class="w8-btn w8-btn--ghost w8-btn--sm" id="btn-refresh-country">同步邦国数据</button>
+                        </div>
+                    </div>
+                </section>
 
-    <!-- ============ 修改密码 ============ -->
-    <div class="w8-card">
-        <h2 class="w8-card__title">修改密码</h2>
-        <p class="w8-card__sub">修改后其它设备上的登录态会全部失效。</p>
-        <div class="w8-alert w8-alert--error" id="pwd-error" hidden></div>
-        <div class="w8-alert w8-alert--success" id="pwd-ok" hidden></div>
-        <form id="form-password">
-            <div class="w8-field">
-                <label for="pwd-old">当前密码</label>
-                <input class="w8-input" type="password" id="pwd-old" name="old_password" required>
-            </div>
-            <div class="w8-field">
-                <label for="pwd-new">新密码</label>
-                <input class="w8-input" type="password" id="pwd-new" name="new_password" required>
-            </div>
-            <button type="submit" class="w8-btn">保存新密码</button>
-        </form>
-    </div>
+                <!-- ---------- 绑定管理 ---------- -->
+                <section class="w8-card" id="bindings">
+                    <div class="w8-card__head">
+                        <div>
+                            <div class="w8-card__title">绑定管理</div>
+                            <div class="w8-card__sub">
+                                游戏内玩家名与简幻通为必填且不可解绑；邮箱与 FanVerify 为可选绑定，随时可绑可解。
+                            </div>
+                        </div>
+                    </div>
+                    <div class="w8-card__body">
+                        <div class="w8-bindings" id="bindings-list">
+                            <div class="w8-skeleton" style="height:64px"></div>
+                            <div class="w8-skeleton" style="height:64px"></div>
+                        </div>
+                        <p class="w8-hint w8-mt-4">
+                            绑定与解绑都会改变账号的找回途径，因此都需要输入当前密码。
+                        </p>
+                    </div>
+                </section>
+
+                <!-- ---------- 已授权应用 ---------- -->
+                <section class="w8-card" id="apps">
+                    <div class="w8-card__head">
+                        <div>
+                            <div class="w8-card__title">已授权的第三方应用</div>
+                            <div class="w8-card__sub">第三方应用通过 8W通行证登录后会出现在这里，你可以随时撤销授权。</div>
+                        </div>
+                    </div>
+                    <div class="w8-card__body">
+                        <div id="apps-box">
+                            <div class="w8-skeleton" style="height:20px"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ---------- 账号安全 ---------- -->
+                <section class="w8-card" id="security">
+                    <div class="w8-card__head">
+                        <div>
+                            <div class="w8-card__title">修改密码</div>
+                            <div class="w8-card__sub">修改后其它设备上的登录态会全部失效。</div>
+                        </div>
+                    </div>
+                    <div class="w8-card__body">
+                        <div class="w8-alert w8-alert--error" id="pwd-error" role="alert" hidden></div>
+
+                        <form id="form-password" novalidate>
+                            <div class="w8-field">
+                                <label class="w8-label" for="pwd-old">当前密码</label>
+                                <div class="w8-password">
+                                    <input class="w8-input" type="password" id="pwd-old" name="old_password"
+                                           autocomplete="current-password" required>
+                                    <button type="button" class="w8-password__toggle" data-toggle-password="pwd-old"
+                                            aria-label="显示密码">👁</button>
+                                </div>
+                            </div>
+                            <div class="w8-field">
+                                <label class="w8-label" for="pwd-new">新密码</label>
+                                <div class="w8-password">
+                                    <input class="w8-input" type="password" id="pwd-new" name="new_password"
+                                           autocomplete="new-password" placeholder="至少 8 位" required>
+                                    <button type="button" class="w8-password__toggle" data-toggle-password="pwd-new"
+                                            aria-label="显示密码">👁</button>
+                                </div>
+                            </div>
+                            <button type="submit" class="w8-btn">保存新密码</button>
+                        </form>
+                    </div>
+                </section>
 
 <?php if ($isAdmin): ?>
-    <!-- ============ 第三方应用管理（API 分发） ============ -->
-    <div class="w8-card">
-        <h2 class="w8-card__title">第三方应用管理</h2>
-        <p class="w8-card__sub">
-            为第三方应用签发 client_id / client_secret，它们即可通过 OAuth 2.0 接入 8W通行证。
-        </p>
+                <!-- ---------- 第三方应用管理 ---------- -->
+                <section class="w8-card" id="clients">
+                    <div class="w8-card__head">
+                        <div>
+                            <div class="w8-card__title">第三方应用管理</div>
+                            <div class="w8-card__sub">
+                                为第三方应用签发 client_id / client_secret，它们即可通过 OAuth 2.0 接入 8W通行证。
+                            </div>
+                        </div>
+                    </div>
+                    <div class="w8-card__body">
 
-        <div class="w8-alert w8-alert--info">
-            授权地址 <code>/oauth/authorize</code>　令牌地址 <code>/oauth/token</code>　
-            用户信息 <code>/oauth/userinfo</code>
+                        <div class="w8-alert w8-alert--info w8-mb-4">
+                            <span class="w8-alert__icon" aria-hidden="true">i</span>
+                            <div class="w8-alert__body">
+                                授权地址 <code>/oauth/authorize</code>　令牌地址 <code>/oauth/token</code>　
+                                用户信息 <code>/oauth/userinfo</code>
+                            </div>
+                        </div>
+
+                        <div class="w8-alert w8-alert--success" id="client-secret-box" hidden></div>
+                        <div class="w8-alert w8-alert--error" id="client-error" role="alert" hidden></div>
+
+                        <div id="clients-box" class="w8-mb-4">
+                            <div class="w8-skeleton" style="height:20px"></div>
+                        </div>
+
+                        <details class="w8-mt-5">
+                            <summary class="w8-strong" style="cursor:pointer; padding: 8px 0;">＋ 新建应用</summary>
+                            <form id="form-client" class="w8-mt-4" novalidate>
+                                <div class="w8-field">
+                                    <label class="w8-label" for="client-name">应用名称</label>
+                                    <input class="w8-input" type="text" id="client-name" maxlength="64" required>
+                                </div>
+                                <div class="w8-field">
+                                    <label class="w8-label" for="client-homepage">应用主页<span class="w8-label__optional">可选</span></label>
+                                    <input class="w8-input" type="url" id="client-homepage" placeholder="https://example.com">
+                                </div>
+                                <div class="w8-field">
+                                    <label class="w8-label" for="client-redirect">回调地址<span class="w8-label__optional">每行一个</span></label>
+                                    <textarea class="w8-input w8-textarea" id="client-redirect" rows="2"
+                                              placeholder="https://example.com/oauth/callback"></textarea>
+                                </div>
+                                <div class="w8-field">
+                                    <label class="w8-label">允许申请的 scope</label>
+                                    <div class="w8-stack w8-stack--tight">
+<?php foreach ($scopes as $name => $description): ?>
+                                        <label class="w8-check">
+                                            <input type="checkbox" class="client-scope" value="<?php echo h($name); ?>"
+                                                <?php echo $name === 'basic' ? 'checked' : ''; ?>>
+                                            <span class="w8-check__text">
+                                                <strong><?php echo h($name); ?></strong>
+                                                <span><?php echo h($description); ?></span>
+                                            </span>
+                                        </label>
+<?php endforeach; ?>
+                                    </div>
+                                </div>
+                                <div class="w8-field">
+                                    <label class="w8-check">
+                                        <input type="checkbox" id="client-confidential" checked>
+                                        <span class="w8-check__text">
+                                            <strong>机密客户端</strong>
+                                            <span>有服务端、能安全保存 client_secret。纯前端应用请取消勾选并使用 PKCE。</span>
+                                        </span>
+                                    </label>
+                                </div>
+                                <button type="submit" class="w8-btn">创建应用</button>
+                            </form>
+                        </details>
+                    </div>
+                </section>
+
+                <!-- ---------- 接口接入状态 ---------- -->
+                <section class="w8-card" id="interfaces">
+                    <div class="w8-card__head">
+                        <div>
+                            <div class="w8-card__title">接口接入状态</div>
+                            <div class="w8-card__sub">
+                                标为「待接入」的接口在被调用时会明确返回 501，不会静默放行未验证的身份。
+                            </div>
+                        </div>
+                    </div>
+                    <div class="w8-card__body">
+                        <table class="w8-kv">
+<?php foreach ($interfaceStatus as $row): ?>
+                            <tr>
+                                <th><?php echo h($row[0]); ?><?php echo $row[3] ? '' : ' <span class="w8-badge w8-badge--off">可选</span>'; ?></th>
+                                <td>
+<?php if ($row[1]): ?>
+                                    <span class="w8-badge w8-badge--ok"><span class="w8-dot"></span>已接入</span>
+<?php else: ?>
+                                    <span class="w8-badge w8-badge--todo"><span class="w8-dot"></span>待接入</span>
+                                    <span class="w8-muted">配置 <code><?php echo h($row[2]); ?></code></span>
+<?php endif; ?>
+                                </td>
+                            </tr>
+<?php endforeach; ?>
+                        </table>
+                    </div>
+                </section>
+<?php endif; ?>
+
+            </div>
         </div>
 
-        <div class="w8-alert w8-alert--warn" id="client-secret-box" hidden></div>
-        <div class="w8-alert w8-alert--error" id="client-error" hidden></div>
-
-        <div id="clients-box"><p class="w8-muted">加载中…</p></div>
-
-        <h3 class="w8-mt">新建应用</h3>
-        <form id="form-client">
-            <div class="w8-field">
-                <label for="client-name">应用名称</label>
-                <input class="w8-input" type="text" id="client-name" required maxlength="64">
-            </div>
-            <div class="w8-field">
-                <label for="client-homepage">应用主页</label>
-                <input class="w8-input" type="url" id="client-homepage" placeholder="https://example.com">
-            </div>
-            <div class="w8-field">
-                <label for="client-redirect">回调地址（每行一个）</label>
-                <textarea class="w8-input" id="client-redirect" rows="2"
-                          placeholder="https://example.com/oauth/callback"></textarea>
-            </div>
-            <div class="w8-field">
-                <label>允许申请的 scope</label>
-                <?php foreach ($scopes as $name => $description): ?>
-                    <label class="w8-muted" style="font-weight:400">
-                        <input type="checkbox" class="client-scope" value="<?php echo h($name); ?>"
-                            <?php echo $name === 'basic' ? 'checked' : ''; ?>>
-                        <code><?php echo h($name); ?></code> — <?php echo h($description); ?>
-                    </label><br>
-                <?php endforeach; ?>
-            </div>
-            <div class="w8-field">
-                <label class="w8-muted" style="font-weight:400">
-                    <input type="checkbox" id="client-confidential" checked>
-                    机密客户端（有服务端，可安全保存 client_secret；纯前端应用请取消勾选并使用 PKCE）
-                </label>
-            </div>
-            <button type="submit" class="w8-btn">创建应用</button>
-        </form>
-    </div>
-
-    <!-- ============ 接口接入状态 ============ -->
-    <div class="w8-card">
-        <h2 class="w8-card__title">接口接入状态</h2>
-        <p class="w8-card__sub">标为「待接入」的接口会在被调用时明确报错，不会静默放行。</p>
-        <table class="w8-kv">
-            <?php foreach ($interfaceStatus as $row): ?>
-                <tr>
-                    <th><?php echo h($row[0]); ?></th>
-                    <td>
-                        <?php if ($row[1]): ?>
-                            <span style="color:var(--w8-success)">已接入</span>
-                        <?php else: ?>
-                            <span style="color:var(--w8-danger)">待接入（TODO）</span>
-                            <span class="w8-muted">— 配置 <code><?php echo h($row[2]); ?></code></span>
-                        <?php endif; ?>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-        </table>
-    </div>
-<?php endif; ?>
+        <div class="w8-footer">
+            8W通行证 · <a href="/">返回 8W社区</a>
+        </div>
+    </main>
 
 <?php endif; ?>
 
-    <div class="w8-footer">
-        8W通行证 · <a href="/">返回 8W社区</a>
-    </div>
 </div>
+
+<div class="w8-toasts" id="toasts" role="status" aria-live="polite"></div>
 
 <script>
 (function () {
@@ -325,17 +565,11 @@ $scopes = Scope::describe();
     var API_OAUTH = '/passport/api/oauth';
     var RETURN_TO = <?php echo json_encode($returnTo, JSON_UNESCAPED_UNICODE); ?>;
     var IS_ADMIN = <?php echo $isAdmin ? 'true' : 'false'; ?>;
+    var PLAYER_NAME = <?php echo json_encode($account !== null ? $account->playerName() : '', JSON_UNESCAPED_UNICODE); ?>;
 
     function $(id) { return document.getElementById(id); }
 
-    function show(el, message, kind) {
-        if (!el) { return; }
-        el.className = 'w8-alert w8-alert--' + (kind || 'error');
-        el.innerHTML = message;
-        el.hidden = false;
-    }
-
-    function hide(el) { if (el) { el.hidden = true; } }
+    /* ---------------- 通用工具 ---------------- */
 
     function esc(value) {
         return String(value === null || value === undefined ? '' : value)
@@ -364,16 +598,90 @@ $scopes = Scope::describe();
         return '请求失败';
     }
 
-    /* ---------------- 标签切换 ---------------- */
+    function toast(message, kind) {
+        var box = $('toasts');
+        if (!box) { return; }
+
+        var el = document.createElement('div');
+        el.className = 'w8-toast' + (kind ? ' w8-toast--' + kind : '');
+        el.innerHTML = esc(message);
+        box.appendChild(el);
+
+        setTimeout(function () {
+            el.classList.add('w8-toast--leaving');
+            setTimeout(function () { el.remove(); }, 260);
+        }, 3200);
+    }
+
+    function showAlert(el, message, kind) {
+        if (!el) { return; }
+        el.className = 'w8-alert w8-alert--' + (kind || 'error');
+        el.innerHTML = '<span class="w8-alert__icon" aria-hidden="true">!</span>'
+            + '<div class="w8-alert__body">' + message + '</div>';
+        el.hidden = false;
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+
+    function hide(el) { if (el) { el.hidden = true; } }
+
+    function setLoading(button, loading) {
+        if (!button) { return; }
+        button.classList.toggle('w8-btn--loading', !!loading);
+        button.disabled = !!loading;
+    }
+
+    /* ---------------- 密码显示 / 隐藏 ---------------- */
+    Array.prototype.forEach.call(document.querySelectorAll('[data-toggle-password]'), function (button) {
+        button.addEventListener('click', function () {
+            var input = $(button.getAttribute('data-toggle-password'));
+            if (!input) { return; }
+            var showing = input.type === 'text';
+            input.type = showing ? 'password' : 'text';
+            button.textContent = showing ? '👁' : '🙈';
+            button.setAttribute('aria-label', showing ? '显示密码' : '隐藏密码');
+        });
+    });
+
+    /* ---------------- 密码强度 ---------------- */
+    function scorePassword(value) {
+        if (!value) { return 0; }
+        var score = 0;
+        if (value.length >= 8) { score++; }
+        if (value.length >= 12) { score++; }
+        if (/[a-z]/.test(value) && /[A-Z]/.test(value)) { score++; }
+        if (/\d/.test(value)) { score++; }
+        if (/[^A-Za-z0-9]/.test(value)) { score++; }
+        return Math.min(4, score);
+    }
+
+    var pwInput = $('reg-password');
+    var pwMeter = $('pw-meter');
+    if (pwInput && pwMeter) {
+        var bars = pwMeter.querySelectorAll('.w8-meter__bar');
+        var label = pwMeter.querySelector('.w8-meter__text');
+        var words = ['太弱', '较弱', '一般', '较强', '很强'];
+
+        pwInput.addEventListener('input', function () {
+            var score = scorePassword(pwInput.value);
+            Array.prototype.forEach.call(bars, function (bar, index) {
+                bar.className = 'w8-meter__bar' + (index < score ? ' w8-meter__bar--on-' + score : '');
+            });
+            label.textContent = pwInput.value ? words[score] : '';
+        });
+    }
+
+    /* ---------------- 标签页 ---------------- */
     var tabs = document.querySelectorAll('.w8-tab');
     Array.prototype.forEach.call(tabs, function (tab) {
         tab.addEventListener('click', function () {
             Array.prototype.forEach.call(tabs, function (other) {
                 other.classList.remove('w8-tab--active');
+                other.setAttribute('aria-selected', 'false');
                 var panel = $(other.getAttribute('data-panel'));
                 if (panel) { panel.hidden = true; }
             });
             tab.classList.add('w8-tab--active');
+            tab.setAttribute('aria-selected', 'true');
             var target = $(tab.getAttribute('data-panel'));
             if (target) { target.hidden = false; }
         });
@@ -386,18 +694,20 @@ $scopes = Scope::describe();
             event.preventDefault();
             var button = loginForm.querySelector('button[type=submit]');
             hide($('login-error'));
-            button.disabled = true;
 
+            if (!$('login-identifier').value.trim() || !$('login-password').value) {
+                showAlert($('login-error'), '请填写账号和密码');
+                return;
+            }
+
+            setLoading(button, true);
             request('/login', {
                 method: 'POST',
-                body: {
-                    identifier: $('login-identifier').value,
-                    password: $('login-password').value
-                }
+                body: { identifier: $('login-identifier').value.trim(), password: $('login-password').value }
             }).then(function (result) {
-                button.disabled = false;
+                setLoading(button, false);
                 if (!result.ok) {
-                    show($('login-error'), errorText(result));
+                    showAlert($('login-error'), errorText(result));
                     return;
                 }
                 window.location.href = RETURN_TO || '/passport/';
@@ -405,39 +715,54 @@ $scopes = Scope::describe();
         });
     }
 
+    /* ---------------- 可选绑定开关 ---------------- */
+    function wireOptionalToggle(checkboxId, blockId, noteId, message) {
+        var checkbox = $(checkboxId);
+        var block = $(blockId);
+        if (!checkbox || !block) { return; }
+        checkbox.addEventListener('change', function () {
+            block.hidden = !checkbox.checked;
+            if (checkbox.checked && noteId && $(noteId)) { $(noteId).textContent = message; }
+        });
+    }
+
+    wireOptionalToggle('opt-email', 'block-email', 'opt-email-note', '已选择绑定，请填写邮箱并获取验证码');
+    wireOptionalToggle('opt-fanverify', 'block-fanverify', 'opt-fanverify-note', '已选择绑定，请填写 FanVerify 账号ID与验证码');
+
     /* ---------------- 发送邮箱验证码 ---------------- */
     var emailCodeButton = $('btn-email-code');
     if (emailCodeButton) {
         emailCodeButton.addEventListener('click', function () {
             var email = $('reg-email').value.trim();
             if (!email) {
-                show($('register-error'), '请先填写邮箱');
+                showAlert($('register-error'), '请先填写邮箱');
                 return;
             }
 
-            emailCodeButton.disabled = true;
+            setLoading(emailCodeButton, true);
             hide($('register-error'));
 
             request('/email-code', { method: 'POST', body: { email: email, scene: 'register' } })
                 .then(function (result) {
                     if (!result.ok) {
-                        emailCodeButton.disabled = false;
-                        show($('register-error'), errorText(result));
+                        setLoading(emailCodeButton, false);
+                        showAlert($('register-error'), errorText(result));
                         return;
                     }
 
                     var left = 60;
+                    emailCodeButton.textContent = left + ' 秒后重发';
+                    $('email-code-hint').textContent = '验证码已发送，请查收邮件（10 分钟内有效）。';
+
                     var timer = setInterval(function () {
                         left -= 1;
                         emailCodeButton.textContent = left + ' 秒后重发';
                         if (left <= 0) {
                             clearInterval(timer);
-                            emailCodeButton.disabled = false;
+                            setLoading(emailCodeButton, false);
                             emailCodeButton.textContent = '获取验证码';
                         }
                     }, 1000);
-                    emailCodeButton.textContent = '60 秒后重发';
-                    $('email-code-hint').textContent = '验证码已发送，请查收邮件（10 分钟内有效）。';
                 });
         });
     }
@@ -449,26 +774,51 @@ $scopes = Scope::describe();
             event.preventDefault();
             var button = registerForm.querySelector('button[type=submit]');
             hide($('register-error'));
-            button.disabled = true;
-            button.textContent = '校验中，请稍候…';
 
-            request('/register', {
-                method: 'POST',
-                body: {
-                    username: $('reg-username').value.trim(),
-                    password: $('reg-password').value,
-                    email: $('reg-email').value.trim(),
-                    email_code: $('reg-email-code').value.trim(),
-                    player_name: $('reg-player').value.trim(),
-                    simpass_uid: $('reg-simpass-uid').value.trim(),
-                    simpass_code: $('reg-simpass-code').value.trim()
-                }
-            }).then(function (result) {
-                button.disabled = false;
-                button.textContent = '注册并登录';
+            var payload = {
+                username: $('reg-username').value.trim(),
+                password: $('reg-password').value,
+                player_name: $('reg-player').value.trim(),
+                simpass_uid: $('reg-simpass-uid').value.trim(),
+                simpass_code: $('reg-simpass-code').value.trim()
+            };
 
+            if (!$('opt-email').checked) {
+                // 没勾选就不提交邮箱字段，避免把空串当成"填了邮箱但没填验证码"
+                payload.email = '';
+                payload.email_code = '';
+            } else {
+                payload.email = $('reg-email').value.trim();
+                payload.email_code = $('reg-email-code').value.trim();
+            }
+
+            if ($('opt-fanverify').checked) {
+                payload.fanverify_uid = $('reg-fanverify-uid').value.trim();
+                payload.fanverify_code = $('reg-fanverify-code').value.trim();
+            }
+
+            if (!payload.username || !payload.password || !payload.player_name) {
+                showAlert($('register-error'), '请填写用户名、密码和游戏内玩家名');
+                return;
+            }
+            if (payload.password.length < 8) {
+                showAlert($('register-error'), '密码至少需要 8 个字符');
+                return;
+            }
+            if ($('opt-email').checked && (!payload.email || !payload.email_code)) {
+                showAlert($('register-error'), '勾选了绑定邮箱，就请填写邮箱并获取验证码');
+                return;
+            }
+            if ($('opt-fanverify').checked && (!payload.fanverify_uid || !payload.fanverify_code)) {
+                showAlert($('register-error'), '勾选了绑定 FanVerify，就请填写账号ID与验证码');
+                return;
+            }
+
+            setLoading(button, true);
+            request('/register', { method: 'POST', body: payload }).then(function (result) {
+                setLoading(button, false);
                 if (!result.ok) {
-                    show($('register-error'), errorText(result));
+                    showAlert($('register-error'), errorText(result));
                     return;
                 }
                 window.location.href = RETURN_TO || '/passport/';
@@ -491,155 +841,400 @@ $scopes = Scope::describe();
     if (passwordForm) {
         passwordForm.addEventListener('submit', function (event) {
             event.preventDefault();
+            var button = passwordForm.querySelector('button[type=submit]');
             hide($('pwd-error'));
-            hide($('pwd-ok'));
 
+            setLoading(button, true);
             request('/password', {
                 method: 'POST',
                 body: { old_password: $('pwd-old').value, new_password: $('pwd-new').value }
             }).then(function (result) {
+                setLoading(button, false);
                 if (!result.ok) {
-                    show($('pwd-error'), errorText(result));
+                    showAlert($('pwd-error'), errorText(result));
                     return;
                 }
                 passwordForm.reset();
-                show($('pwd-ok'), '密码已更新', 'success');
+                toast('密码已更新，其它设备上的登录态已失效', 'success');
             });
         });
     }
 
-    /* ---------------- 邦国 / 玩家信息 ---------------- */
-    function renderCountry(country) {
-        if (!country) {
-            $('country-box').innerHTML = '<p class="w8-muted">尚未同步到邦国信息。</p>';
-            return;
-        }
-        var players = (country.players || []).map(function (player) {
-            return esc(player.player_name) + (player.player_id ? ' <span class="w8-muted">#' + esc(player.player_id) + '</span>' : '');
-        }).join('、');
+    /* ---------------- 绑定管理 ---------------- */
+    var BINDING_ICONS = { player: '🎮', simpass: '🔗', email: '✉️', fanverify: '🛡️' };
 
-        $('country-box').innerHTML =
-            '<table class="w8-kv">' +
-            '<tr><th>邦国ID</th><td>' + esc(country.id) + '</td></tr>' +
-            '<tr><th>邦国名称</th><td>' + esc(country.name) + '</td></tr>' +
-            '<tr><th>邦国宣言</th><td>' + (country.declaration ? esc(country.declaration) : '<span class="w8-muted">无</span>') + '</td></tr>' +
-            '<tr><th>领土大小</th><td>' + (country.territory_chunks === null ? '<span class="w8-muted">未知</span>' : esc(country.territory_chunks) + ' Chunk') + '</td></tr>' +
-            '<tr><th>邦国玩家列表</th><td>' + (players || '<span class="w8-muted">暂无</span>') + '</td></tr>' +
-            '</table>';
+    function bindingRow(key, item) {
+        var badge = item.bound
+            ? '<span class="w8-badge w8-badge--ok"><span class="w8-dot"></span>已绑定</span>'
+            : '<span class="w8-badge w8-badge--off">未绑定</span>';
+
+        if (item.required) {
+            badge += ' <span class="w8-badge w8-badge--required">必填</span>';
+        }
+
+        var value = item.bound && item.value !== null && item.value !== ''
+            ? '<div class="w8-binding__value">' + esc(item.value) + (item.detail ? ' · ' + esc(item.detail) : '') + '</div>'
+            : (item.detail ? '<div class="w8-binding__value">' + esc(item.detail) + '</div>' : '');
+
+        var actions = '';
+        if (item.bindable) {
+            if (!item.available) {
+                actions = '<span class="w8-badge w8-badge--todo"><span class="w8-dot"></span>接口待接入</span>';
+            } else if (item.bound) {
+                actions = '<button type="button" class="w8-btn w8-btn--danger-ghost w8-btn--sm"'
+                    + ' data-unbind="' + esc(key) + '">解绑</button>';
+            } else {
+                actions = '<button type="button" class="w8-btn w8-btn--ghost w8-btn--sm"'
+                    + ' data-bind="' + esc(key) + '">绑定</button>';
+            }
+        }
+
+        return ''
+            + '<div class="w8-binding' + (item.bound ? ' w8-binding--bound' : '') + '" data-binding="' + esc(key) + '">'
+            +   '<span class="w8-binding__icon" aria-hidden="true">' + (BINDING_ICONS[key] || '•') + '</span>'
+            +   '<div class="w8-binding__main">'
+            +     '<div class="w8-binding__name">' + esc(item.label) + badge + '</div>'
+            +     value
+            +   '</div>'
+            +   '<div class="w8-binding__actions">' + actions + '</div>'
+            + '</div>'
+            + '<div class="w8-panel" id="binding-form-' + esc(key) + '" hidden></div>';
     }
 
-    function loadCountry(fresh) {
-        var url = '/country?fresh=' + (fresh ? '1' : '0');
-        request(url).then(function (result) {
+    function bindingFormHtml(key, bound) {
+        var passwordField = ''
+            + '<div class="w8-field">'
+            +   '<label class="w8-label" for="bind-' + key + '-password">当前密码</label>'
+            +   '<input class="w8-input" type="password" id="bind-' + key + '-password"'
+            +   ' autocomplete="current-password" placeholder="确认是你本人操作" required>'
+            + '</div>';
+
+        if (bound) {
+            return '<div class="w8-card w8-mb-4"><div class="w8-card__body">'
+                + '<p class="w8-muted w8-mb-4">解绑后将不再能通过该方式找回账号。</p>'
+                + passwordField
+                + '<div class="w8-cluster w8-cluster--end">'
+                +   '<button type="button" class="w8-btn w8-btn--ghost w8-btn--sm" data-cancel="' + key + '">取消</button>'
+                +   '<button type="button" class="w8-btn w8-btn--danger w8-btn--sm" data-confirm-unbind="' + key + '">确认解绑</button>'
+                + '</div></div></div>';
+        }
+
+        if (key === 'email') {
+            return '<div class="w8-card w8-mb-4"><div class="w8-card__body">'
+                + '<div class="w8-field">'
+                +   '<label class="w8-label" for="bind-email-value">验证邮箱</label>'
+                +   '<div class="w8-inputgroup">'
+                +     '<input class="w8-input" type="email" id="bind-email-value" placeholder="you@example.com">'
+                +     '<button type="button" class="w8-btn w8-btn--ghost" id="bind-email-send">获取验证码</button>'
+                +   '</div>'
+                +   '<span class="w8-hint" id="bind-email-hint">验证码将发送到该邮箱，10 分钟内有效。</span>'
+                + '</div>'
+                + '<div class="w8-field">'
+                +   '<label class="w8-label" for="bind-email-code">邮箱验证码</label>'
+                +   '<input class="w8-input" type="text" id="bind-email-code" inputmode="numeric" maxlength="6" placeholder="6 位数字">'
+                + '</div>'
+                + passwordField
+                + '<div class="w8-cluster w8-cluster--end">'
+                +   '<button type="button" class="w8-btn w8-btn--ghost w8-btn--sm" data-cancel="email">取消</button>'
+                +   '<button type="button" class="w8-btn w8-btn--sm" data-confirm-bind="email">确认绑定</button>'
+                + '</div></div></div>';
+        }
+
+        return '<div class="w8-card w8-mb-4"><div class="w8-card__body">'
+            + '<div class="w8-field">'
+            +   '<label class="w8-label" for="bind-fanverify-uid">FanVerify 账号ID</label>'
+            +   '<input class="w8-input" type="text" id="bind-fanverify-uid" inputmode="numeric" placeholder="FanVerify 账号ID">'
+            + '</div>'
+            + '<div class="w8-field">'
+            +   '<label class="w8-label" for="bind-fanverify-code">FanVerify 验证码</label>'
+            +   '<input class="w8-input" type="text" id="bind-fanverify-code" inputmode="numeric" maxlength="8" placeholder="在 FanVerify 内获取">'
+            + '</div>'
+            + passwordField
+            + '<div class="w8-cluster w8-cluster--end">'
+            +   '<button type="button" class="w8-btn w8-btn--ghost w8-btn--sm" data-cancel="fanverify">取消</button>'
+            +   '<button type="button" class="w8-btn w8-btn--sm" data-confirm-bind="fanverify">确认绑定</button>'
+            + '</div></div></div>';
+    }
+
+    var currentBindings = {};
+
+    function renderBindings(bindings) {
+        var box = $('bindings-list');
+        if (!box) { return; }
+
+        currentBindings = bindings;
+        var html = '';
+        ['player', 'simpass', 'email', 'fanverify'].forEach(function (key) {
+            if (bindings[key]) { html += bindingRow(key, bindings[key]); }
+        });
+        box.innerHTML = html;
+        wireBindingActions();
+    }
+
+    function openBindingPanel(key, bound) {
+        // 先关掉其它面板，避免同时展开一堆
+        Array.prototype.forEach.call(document.querySelectorAll('.w8-panel[id^="binding-form-"]'), function (panel) {
+            panel.hidden = true;
+            panel.innerHTML = '';
+        });
+
+        var panel = $('binding-form-' + key);
+        if (!panel) { return; }
+        panel.innerHTML = bindingFormHtml(key, bound);
+        panel.hidden = false;
+        wireBindingForm(key, bound);
+    }
+
+    function wireBindingForm(key, bound) {
+        var sendButton = $('bind-email-send');
+        if (sendButton) {
+            sendButton.addEventListener('click', function () {
+                var email = $('bind-email-value').value.trim();
+                if (!email) { toast('请先填写邮箱', 'error'); return; }
+
+                setLoading(sendButton, true);
+                request('/email-code', { method: 'POST', body: { email: email, scene: 'bind' } })
+                    .then(function (result) {
+                        if (!result.ok) {
+                            setLoading(sendButton, false);
+                            toast(result.error ? result.error.message : '发送失败', 'error');
+                            return;
+                        }
+                        var left = 60;
+                        sendButton.textContent = left + ' 秒后重发';
+                        $('bind-email-hint').textContent = '验证码已发送，请查收邮件。';
+                        var timer = setInterval(function () {
+                            left -= 1;
+                            sendButton.textContent = left + ' 秒后重发';
+                            if (left <= 0) {
+                                clearInterval(timer);
+                                setLoading(sendButton, false);
+                                sendButton.textContent = '获取验证码';
+                            }
+                        }, 1000);
+                    });
+            });
+        }
+
+        var confirmBind = document.querySelector('[data-confirm-bind="' + key + '"]');
+        if (confirmBind) {
+            confirmBind.addEventListener('click', function () {
+                var body = { type: key, password: $('bind-' + key + '-password').value };
+
+                if (key === 'email') {
+                    body.email = $('bind-email-value').value.trim();
+                    body.code = $('bind-email-code').value.trim();
+                } else {
+                    body.uid = $('bind-fanverify-uid').value.trim();
+                    body.code = $('bind-fanverify-code').value.trim();
+                }
+
+                setLoading(confirmBind, true);
+                request('/bindings', { method: 'POST', body: body }).then(function (result) {
+                    setLoading(confirmBind, false);
+                    if (!result.ok) {
+                        toast(result.error ? result.error.message : '绑定失败', 'error');
+                        return;
+                    }
+                    toast('绑定成功', 'success');
+                    renderBindings(result.data.bindings);
+                });
+            });
+        }
+
+        var confirmUnbind = document.querySelector('[data-confirm-unbind="' + key + '"]');
+        if (confirmUnbind) {
+            confirmUnbind.addEventListener('click', function () {
+                var password = $('bind-' + key + '-password').value;
+
+                setLoading(confirmUnbind, true);
+                request('/bindings?type=' + encodeURIComponent(key)
+                    + '&password=' + encodeURIComponent(password), { method: 'DELETE' })
+                    .then(function (result) {
+                        setLoading(confirmUnbind, false);
+                        if (!result.ok) {
+                            toast(result.error ? result.error.message : '解绑失败', 'error');
+                            return;
+                        }
+                        toast('已解绑', 'success');
+                        renderBindings(result.data.bindings);
+                    });
+            });
+        }
+
+        var cancel = document.querySelector('[data-cancel="' + key + '"]');
+        if (cancel) {
+            cancel.addEventListener('click', function () {
+                var panel = $('binding-form-' + key);
+                if (panel) { panel.hidden = true; panel.innerHTML = ''; }
+            });
+        }
+    }
+
+    function wireBindingActions() {
+        Array.prototype.forEach.call(document.querySelectorAll('[data-bind]'), function (button) {
+            button.addEventListener('click', function () {
+                openBindingPanel(button.getAttribute('data-bind'), false);
+            });
+        });
+
+        Array.prototype.forEach.call(document.querySelectorAll('[data-unbind]'), function (button) {
+            button.addEventListener('click', function () {
+                openBindingPanel(button.getAttribute('data-unbind'), true);
+            });
+        });
+    }
+
+    function loadBindings() {
+        if (!$('bindings-list')) { return; }
+        request('/bindings').then(function (result) {
             if (!result.ok) {
-                $('country-box').innerHTML = '<p class="w8-muted">' + errorText(result) + '</p>';
+                $('bindings-list').innerHTML = '<div class="w8-empty">' + errorText(result) + '</div>';
                 return;
             }
-            renderCountry(result.data.country);
+            renderBindings(result.data.bindings);
         });
     }
-
-    if ($('country-box')) {
-        // me 接口里已经带了本地缓存的邦国信息，先渲染，再按需回源
-        request('/me').then(function (result) {
-            if (result.ok && result.data.country) {
-                renderCountry(result.data.country);
-            } else if (result.ok) {
-                $('country-box').innerHTML = '<p class="w8-muted">尚未同步到邦国信息。</p>';
-            }
-        });
-    }
-
-    var refreshCountry = $('btn-refresh-country');
-    if (refreshCountry) {
-        refreshCountry.addEventListener('click', function () {
-            $('country-box').innerHTML = '<p class="w8-muted">同步中…</p>';
-            loadCountry(true);
-        });
-    }
-
-    var refreshPlayer = $('btn-refresh-player');
-    if (refreshPlayer) {
-        refreshPlayer.addEventListener('click', function () {
-            var name = <?php echo json_encode($account !== null ? $account->playerName() : '', JSON_UNESCAPED_UNICODE); ?>;
-            request('/player?fresh=1&name=' + encodeURIComponent(name)).then(function (result) {
-                if (!result.ok) {
-                    show($('pwd-error'), '玩家同步失败：' + errorText(result));
-                    return;
-                }
-                if (result.data.country) {
-                    renderCountry(result.data.country);
-                }
-                window.location.reload();
-            });
-        });
-    }
+    loadBindings();
 
     /* ---------------- 已授权应用 ---------------- */
     function loadApps() {
         if (!$('apps-box')) { return; }
         request('/authorized-apps').then(function (result) {
             if (!result.ok) {
-                $('apps-box').innerHTML = '<p class="w8-muted">' + errorText(result) + '</p>';
+                $('apps-box').innerHTML = '<div class="w8-empty">' + errorText(result) + '</div>';
                 return;
             }
             var apps = result.data.apps || [];
             if (!apps.length) {
-                $('apps-box').innerHTML = '<p class="w8-muted">还没有第三方应用获得授权。</p>';
+                $('apps-box').innerHTML = '<div class="w8-empty">'
+                    + '<span class="w8-empty__icon" aria-hidden="true">◎</span>'
+                    + '还没有第三方应用获得授权。</div>';
                 return;
             }
-            $('apps-box').innerHTML = '<table class="w8-kv">' + apps.map(function (app) {
-                return '<tr><th>' + esc(app.name) + '</th><td>' +
-                    '<div class="w8-muted">scope：' + esc((app.scopes || []).join(' ')) + '</div>' +
-                    '<div class="w8-muted">授权时间：' + esc(app.authorized_at) + '</div>' +
-                    '<button class="w8-btn w8-btn--ghost w8-btn--sm" data-client="' + esc(app.client_id) + '">撤销授权</button>' +
-                    '</td></tr>';
-            }).join('') + '</table>';
 
-            Array.prototype.forEach.call($('apps-box').querySelectorAll('button[data-client]'), function (button) {
+            $('apps-box').innerHTML = '<div class="w8-bindings">' + apps.map(function (app) {
+                return '<div class="w8-binding">'
+                    + '<span class="w8-binding__icon" aria-hidden="true">◎</span>'
+                    + '<div class="w8-binding__main">'
+                    +   '<div class="w8-binding__name">' + esc(app.name) + '</div>'
+                    +   '<div class="w8-binding__value">scope：' + esc((app.scopes || []).join(' ')) + '</div>'
+                    +   '<div class="w8-binding__value">授权时间：' + esc(app.authorized_at) + '</div>'
+                    + '</div>'
+                    + '<div class="w8-binding__actions">'
+                    +   '<button type="button" class="w8-btn w8-btn--danger-ghost w8-btn--sm"'
+                    +   ' data-revoke="' + esc(app.client_id) + '">撤销授权</button>'
+                    + '</div></div>';
+            }).join('') + '</div>';
+
+            Array.prototype.forEach.call($('apps-box').querySelectorAll('[data-revoke]'), function (button) {
                 button.addEventListener('click', function () {
-                    var clientId = button.getAttribute('data-client');
-                    fetch(API + '/authorized-apps?client_id=' + encodeURIComponent(clientId), {
-                        method: 'DELETE', credentials: 'same-origin'
-                    }).then(loadApps);
+                    var clientId = button.getAttribute('data-revoke');
+                    setLoading(button, true);
+                    request('/authorized-apps?client_id=' + encodeURIComponent(clientId), { method: 'DELETE' })
+                        .then(function () {
+                            toast('已撤销该应用的授权', 'success');
+                            loadApps();
+                        });
                 });
             });
         });
     }
     loadApps();
 
-    /* ---------------- 第三方应用管理 ---------------- */
+    /* ---------------- 玩家 / 邦国同步 ---------------- */
+    function renderCountry(country) {
+        var cell = $('cell-country');
+        if (cell) {
+            cell.textContent = country && country.name ? country.name + '（' + country.id + '）' : '无';
+        }
+        if (country) {
+            toast('邦国数据已同步', 'success');
+        }
+    }
+
+    var refreshCountry = $('btn-refresh-country');
+    if (refreshCountry) {
+        refreshCountry.addEventListener('click', function () {
+            setLoading(refreshCountry, true);
+            request('/me').then(function (result) {
+                if (result.ok && result.data.account && result.data.account.country_id) {
+                    return request('/country?fresh=1&id=' + encodeURIComponent(result.data.account.country_id));
+                }
+                return { ok: false, error: { message: '当前通行证未关联邦国' } };
+            }).then(function (result) {
+                setLoading(refreshCountry, false);
+                if (!result.ok) {
+                    toast(result.error ? result.error.message : '同步失败', 'error');
+                    return;
+                }
+                renderCountry(result.data.country);
+            });
+        });
+    }
+
+    var refreshPlayer = $('btn-refresh-player');
+    if (refreshPlayer) {
+        refreshPlayer.addEventListener('click', function () {
+            setLoading(refreshPlayer, true);
+            request('/player?fresh=1&name=' + encodeURIComponent(PLAYER_NAME)).then(function (result) {
+                setLoading(refreshPlayer, false);
+                if (!result.ok) {
+                    toast(result.error ? result.error.message : '同步失败', 'error');
+                    return;
+                }
+                if (result.data.country) { renderCountry(result.data.country); }
+                toast('玩家数据已同步', 'success');
+            });
+        });
+    }
+
+    /* ---------------- 管理员：第三方应用 ---------------- */
     function loadClients() {
         if (!IS_ADMIN || !$('clients-box')) { return; }
         request('/clients', null, API_OAUTH).then(function (result) {
             if (!result.ok) {
-                $('clients-box').innerHTML = '<p class="w8-muted">' + errorText(result) + '</p>';
+                $('clients-box').innerHTML = '<div class="w8-empty">' + errorText(result) + '</div>';
                 return;
             }
             var clients = result.data.clients || [];
             if (!clients.length) {
-                $('clients-box').innerHTML = '<p class="w8-muted">还没有登记任何第三方应用。</p>';
+                $('clients-box').innerHTML = '<div class="w8-empty">还没有登记任何第三方应用。</div>';
                 return;
             }
-            $('clients-box').innerHTML = '<table class="w8-kv">' + clients.map(function (client) {
-                return '<tr><th>' + esc(client.name) + '</th><td>' +
-                    '<div class="w8-mono" style="font-size:12.5px">' + esc(client.client_id) + '</div>' +
-                    '<div class="w8-muted">scope：' + esc((client.allowed_scopes || []).join(' ')) + '</div>' +
-                    '<div class="w8-muted">回调：' + esc((client.redirect_uris || []).join(' , ') || '（无）') + '</div>' +
-                    '<div class="w8-muted">状态：' + (client.status === 1 ? '启用' : '已停用') +
-                    '　限流：' + esc(client.rate_limit) + '/分钟</div>' +
-                    (client.status === 1
-                        ? '<button class="w8-btn w8-btn--danger w8-btn--sm" data-id="' + esc(client.id) + '">停用并吊销令牌</button>'
-                        : '') +
-                    '</td></tr>';
-            }).join('') + '</table>';
 
-            Array.prototype.forEach.call($('clients-box').querySelectorAll('button[data-id]'), function (button) {
+            $('clients-box').innerHTML = '<div class="w8-bindings">' + clients.map(function (client) {
+                var statusBadge = client.status === 1
+                    ? '<span class="w8-badge w8-badge--ok"><span class="w8-dot"></span>启用</span>'
+                    : '<span class="w8-badge w8-badge--off">已停用</span>';
+
+                return '<div class="w8-binding">'
+                    + '<span class="w8-binding__icon" aria-hidden="true">⚙</span>'
+                    + '<div class="w8-binding__main">'
+                    +   '<div class="w8-binding__name">' + esc(client.name) + statusBadge + '</div>'
+                    +   '<div class="w8-binding__value w8-mono">' + esc(client.client_id) + '</div>'
+                    +   '<div class="w8-binding__value">scope：' + esc((client.allowed_scopes || []).join(' '))
+                    +     '　限流：' + esc(client.rate_limit) + '/分钟</div>'
+                    +   '<div class="w8-binding__value">回调：' + esc((client.redirect_uris || []).join(' , ') || '（无）') + '</div>'
+                    + '</div>'
+                    + '<div class="w8-binding__actions">'
+                    + (client.status === 1
+                        ? '<button type="button" class="w8-btn w8-btn--danger-ghost w8-btn--sm"'
+                          + ' data-disable="' + esc(client.id) + '">停用</button>'
+                        : '')
+                    + '</div></div>';
+            }).join('') + '</div>';
+
+            Array.prototype.forEach.call($('clients-box').querySelectorAll('[data-disable]'), function (button) {
                 button.addEventListener('click', function () {
                     if (!window.confirm('停用后该应用的所有令牌立即失效，确认继续？')) { return; }
-                    fetch(API_OAUTH + '/clients?id=' + encodeURIComponent(button.getAttribute('data-id')), {
+                    setLoading(button, true);
+                    fetch(API_OAUTH + '/clients?id=' + encodeURIComponent(button.getAttribute('data-disable')), {
                         method: 'DELETE', credentials: 'same-origin'
-                    }).then(loadClients);
+                    }).then(function () {
+                        toast('应用已停用', 'success');
+                        loadClients();
+                    });
                 });
             });
         });
@@ -668,17 +1263,20 @@ $scopes = Scope::describe();
                 }
             }, API_OAUTH).then(function (result) {
                 if (!result.ok) {
-                    show($('client-error'), errorText(result));
+                    showAlert($('client-error'), errorText(result));
                     return;
                 }
 
                 var box = $('client-secret-box');
-                box.innerHTML =
-                    '应用创建成功，请立即保存以下凭据（关闭后无法再次查看）：<br><br>' +
-                    'client_id：<code>' + esc(result.data.client_id) + '</code><br>' +
-                    (result.data.client_secret
+                box.className = 'w8-alert w8-alert--warn w8-mb-4';
+                box.innerHTML = '<span class="w8-alert__icon" aria-hidden="true">!</span>'
+                    + '<div class="w8-alert__body">'
+                    + '应用创建成功，请立即保存以下凭据（关闭后无法再次查看）：<br><br>'
+                    + 'client_id：<code>' + esc(result.data.client_id) + '</code><br>'
+                    + (result.data.client_secret
                         ? 'client_secret：<code>' + esc(result.data.client_secret) + '</code>'
-                        : '（公开客户端，无 client_secret，请使用 PKCE）');
+                        : '（公开客户端，无 client_secret，请使用 PKCE）')
+                    + '</div>';
                 box.hidden = false;
 
                 clientForm.reset();

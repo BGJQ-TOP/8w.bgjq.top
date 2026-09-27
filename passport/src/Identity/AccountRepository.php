@@ -41,14 +41,41 @@ final class AccountRepository
     }
 
     /**
+     * 按邮箱查账号
+     *
+     * 邮箱是可选绑定，未绑定的账号 email 为 NULL；
+     * 传空值时直接返回 null，避免出现 `WHERE email = ''` 这种无意义查询。
+     *
      * @param string $email
      * @return Account|null
      */
     public function findByEmail($email)
     {
+        $email = strtolower(trim((string) $email));
+        if ($email === '') {
+            return null;
+        }
+
+        $row = $this->db->selectOne('SELECT * FROM `passport_accounts` WHERE `email` = ? LIMIT 1', array($email));
+        return $row === null ? null : Account::fromRow($row);
+    }
+
+    /**
+     * 按 FanVerify 账号ID查账号
+     *
+     * @param int $fanverifyUid
+     * @return Account|null
+     */
+    public function findByFanverifyUid($fanverifyUid)
+    {
+        $fanverifyUid = (int) $fanverifyUid;
+        if ($fanverifyUid <= 0) {
+            return null;
+        }
+
         $row = $this->db->selectOne(
-            'SELECT * FROM `passport_accounts` WHERE `email` = ? LIMIT 1',
-            array(strtolower(trim((string) $email)))
+            'SELECT * FROM `passport_accounts` WHERE `fanverify_uid` = ? LIMIT 1',
+            array($fanverifyUid)
         );
         return $row === null ? null : Account::fromRow($row);
     }
@@ -82,6 +109,8 @@ final class AccountRepository
     /**
      * 用户名 / 邮箱都能登录
      *
+     * 邮箱是可选绑定，未绑定时只按用户名匹配。
+     *
      * @param string $identifier
      * @return Account|null
      */
@@ -93,7 +122,7 @@ final class AccountRepository
         }
 
         $row = $this->db->selectOne(
-            'SELECT * FROM `passport_accounts` WHERE `username` = ? OR `email` = ? LIMIT 1',
+            'SELECT * FROM `passport_accounts` WHERE `username` = ? OR (`email` IS NOT NULL AND `email` = ?) LIMIT 1',
             array($identifier, strtolower($identifier))
         );
         return $row === null ? null : Account::fromRow($row);
@@ -184,7 +213,7 @@ final class AccountRepository
         $rows = $this->db->select(
             'SELECT a.`id`, a.`username`, a.`email`, a.`email_verified_at`, a.`role`, a.`status`,
                     a.`player_name`, a.`player_id`, a.`country_id`, a.`simpass_uid`, a.`simpass_level`,
-                    a.`last_login_at`, a.`created_at`, c.`name` AS `country_name`
+                    a.`fanverify_uid`, a.`last_login_at`, a.`created_at`, c.`name` AS `country_name`
              FROM `passport_accounts` a
              LEFT JOIN `countries` c ON c.`id` = a.`country_id`
              ORDER BY a.`username`'
@@ -207,6 +236,7 @@ final class AccountRepository
                 'country_name'      => $row['country_name'],
                 'jhtuid'            => $row['simpass_uid'] !== null ? (int) $row['simpass_uid'] : null,
                 'level'             => $row['simpass_level'] !== null ? (int) $row['simpass_level'] : null,
+                'fanverify_uid'     => $row['fanverify_uid'] !== null ? (int) $row['fanverify_uid'] : null,
                 'last_login_at'     => $row['last_login_at'],
                 'created_at'        => $row['created_at'],
             );

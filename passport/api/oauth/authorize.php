@@ -101,14 +101,18 @@ function renderConsentPage(array $client, array $params, $account, $redirectUri)
         : $initial;
 
     $homepage = isset($client['homepage_url']) && $client['homepage_url'] !== ''
-        ? '<div class="w8-app__meta">' . htmlspecialchars((string) $client['homepage_url'], ENT_QUOTES, 'UTF-8') . '</div>'
+        ? '<div class="w8-consent__meta">' . htmlspecialchars((string) $client['homepage_url'], ENT_QUOTES, 'UTF-8') . '</div>'
         : '';
 
     $scopeItems = '';
     foreach ($params['scopes'] as $scope) {
         $description = isset(Scope::MAP[$scope]) ? Scope::MAP[$scope] : $scope;
-        $scopeItems .= '<li><strong>' . htmlspecialchars($scope, ENT_QUOTES, 'UTF-8') . '</strong>'
-            . '<span>' . htmlspecialchars($description, ENT_QUOTES, 'UTF-8') . '</span></li>';
+        $scopeItems .= '<li>'
+            . '<span class="w8-scopes__check" aria-hidden="true">✓</span>'
+            . '<span class="w8-scopes__body">'
+            . '<span class="w8-scopes__name">' . htmlspecialchars($scope, ENT_QUOTES, 'UTF-8') . '</span>'
+            . '<span class="w8-scopes__desc">' . htmlspecialchars($description, ENT_QUOTES, 'UTF-8') . '</span>'
+            . '</span></li>';
     }
 
     // 授权请求参数原样带回，保证 POST 时能重新走一遍完整校验
@@ -140,55 +144,67 @@ function renderConsentPage(array $client, array $params, $account, $redirectUri)
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#4A7DB5">
 <title>授权 {$appName} 使用你的 8W通行证</title>
+<link rel="icon" href="/images/favicon.ico">
 <link rel="stylesheet" href="/passport/assets/passport.css">
 </head>
 <body class="w8-passport">
-<div class="w8-wrap w8-wrap--narrow">
-    <header class="w8-header">
-        <a class="w8-brand" href="/passport/">
-            <span class="w8-brand__mark">8W</span>
-            <span>8W通行证</span>
-        </a>
+<div class="w8-shell">
+    <header class="w8-topbar">
+        <div class="w8-topbar__inner">
+            <a class="w8-brand" href="/passport/">
+                <span class="w8-brand__mark">8W</span>
+                <span>8W通行证<span class="w8-brand__sub">8W社区统一身份服务</span></span>
+            </a>
+        </div>
     </header>
 
-    <div class="w8-card">
-        <h1 class="w8-card__title">授权请求</h1>
-        <p class="w8-card__sub">以下应用正在申请访问你的通行证信息</p>
+    <main class="w8-main w8-main--narrow">
+        <div class="w8-card w8-card--hero">
+            <div class="w8-card__body">
+                <h1 class="w8-card__title">授权请求</h1>
+                <p class="w8-card__sub">以下应用正在申请访问你的通行证信息</p>
 
-        <div class="w8-app">
-            <div class="w8-app__logo">{$logo}</div>
-            <div>
-                <div class="w8-app__name">{$appName}</div>
-                {$homepage}
+                <div class="w8-consent__app">
+                    <span class="w8-consent__logo">{$logo}</span>
+                    <span>
+                        <span class="w8-consent__name">{$appName}</span>
+                        {$homepage}
+                    </span>
+                </div>
+
+                <p class="w8-label">将向该应用提供</p>
+                <ul class="w8-scopes">{$scopeItems}</ul>
+
+                <form method="post" action="/oauth/authorize">
+                    {$hidden}
+                    <div class="w8-cluster w8-mt-5" style="gap:10px">
+                        <button type="submit" name="decision" value="deny"
+                                class="w8-btn w8-btn--ghost" style="flex:1">拒绝</button>
+                        <button type="submit" name="decision" value="allow"
+                                class="w8-btn" style="flex:2">同意授权</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="w8-card__foot" style="justify-content:flex-start">
+                <table class="w8-kv" style="width:100%">
+                    <tr><th>当前通行证</th><td>{$accountName}</td></tr>
+                    <tr><th>游戏内玩家</th><td>{$playerName}</td></tr>
+                    <tr><th>授权后回调</th><td><code>{$safeRedirect}</code></td></tr>
+                </table>
             </div>
         </div>
 
-        <p class="w8-muted">将向该应用提供：</p>
-        <ul class="w8-scopes">{$scopeItems}</ul>
-
-        <form method="post" action="/oauth/authorize">
-            {$hidden}
-            <div class="w8-actions">
-                <button type="submit" name="decision" value="deny" class="w8-btn w8-btn--ghost">拒绝</button>
-                <button type="submit" name="decision" value="allow" class="w8-btn">同意授权</button>
-            </div>
-        </form>
-    </div>
-
-    <div class="w8-card">
-        <table class="w8-kv">
-            <tr><th>当前通行证</th><td>{$accountName}</td></tr>
-            <tr><th>游戏内玩家</th><td>{$playerName}</td></tr>
-            <tr><th>授权后回调</th><td><code>{$safeRedirect}</code></td></tr>
-        </table>
-        <p class="w8-muted w8-mt">
+        <p class="w8-consent__footnote">
             你可以随时在 <a href="/passport/">通行证中心</a> 查看并撤销已授权的应用。
         </p>
-    </div>
 
-    <div class="w8-footer">8W通行证 · 8W社区统一身份服务</div>
+        <div class="w8-footer">8W通行证 · 8W社区统一身份服务</div>
+    </main>
 </div>
 </body>
 </html>
@@ -199,26 +215,45 @@ function renderErrorPage($message, $status = 400)
 {
     http_response_code((int) $status);
     $safe = htmlspecialchars((string) $message, ENT_QUOTES, 'UTF-8');
+
     echo <<<HTML
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
 <title>授权请求无效</title>
+<link rel="icon" href="/images/favicon.ico">
 <link rel="stylesheet" href="/passport/assets/passport.css">
 </head>
 <body class="w8-passport">
-<div class="w8-wrap w8-wrap--narrow">
-    <header class="w8-header">
-        <a class="w8-brand" href="/passport/"><span class="w8-brand__mark">8W</span><span>8W通行证</span></a>
+<div class="w8-shell">
+    <header class="w8-topbar">
+        <div class="w8-topbar__inner">
+            <a class="w8-brand" href="/passport/">
+                <span class="w8-brand__mark">8W</span>
+                <span>8W通行证<span class="w8-brand__sub">8W社区统一身份服务</span></span>
+            </a>
+        </div>
     </header>
-    <div class="w8-card">
-        <h1 class="w8-card__title">授权请求无效</h1>
-        <div class="w8-alert w8-alert--error">{$safe}</div>
-        <p class="w8-muted">出于安全考虑，本次请求没有被重定向到第三方地址。请回到应用重新发起授权。</p>
-    </div>
-    <div class="w8-footer">8W通行证 · 8W社区统一身份服务</div>
+
+    <main class="w8-main w8-main--narrow">
+        <div class="w8-card">
+            <div class="w8-card__body">
+                <h1 class="w8-card__title">授权请求无效</h1>
+                <div class="w8-alert w8-alert--error w8-mb-4">
+                    <span class="w8-alert__icon" aria-hidden="true">!</span>
+                    <div class="w8-alert__body">{$safe}</div>
+                </div>
+                <p class="w8-muted">
+                    出于安全考虑，本次请求没有被重定向到第三方地址。请回到应用重新发起授权。
+                </p>
+            </div>
+        </div>
+
+        <div class="w8-footer">8W通行证 · 8W社区统一身份服务</div>
+    </main>
 </div>
 </body>
 </html>

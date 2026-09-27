@@ -44,9 +44,15 @@ final class Account
         return (string) $this->attributes['username'];
     }
 
+    /**
+     * 验证邮箱（可选绑定）
+     *
+     * @return string|null 未绑定时为 null
+     */
     public function email()
     {
-        return (string) $this->attributes['email'];
+        $email = isset($this->attributes['email']) ? $this->attributes['email'] : null;
+        return ($email === null || $email === '') ? null : (string) $email;
     }
 
     public function passwordHash()
@@ -59,9 +65,30 @@ final class Account
         return isset($this->attributes['email_verified_at']) ? $this->attributes['email_verified_at'] : null;
     }
 
+    public function hasEmail()
+    {
+        return $this->email() !== null;
+    }
+
     public function isEmailVerified()
     {
-        return $this->emailVerifiedAt() !== null;
+        return $this->hasEmail() && $this->emailVerifiedAt() !== null;
+    }
+
+    public function fanverifyUid()
+    {
+        return isset($this->attributes['fanverify_uid']) && $this->attributes['fanverify_uid'] !== null
+            ? (int) $this->attributes['fanverify_uid'] : null;
+    }
+
+    public function fanverifyVerifiedAt()
+    {
+        return isset($this->attributes['fanverify_verified_at']) ? $this->attributes['fanverify_verified_at'] : null;
+    }
+
+    public function hasFanVerify()
+    {
+        return $this->fanverifyUid() !== null;
     }
 
     public function role()
@@ -131,6 +158,9 @@ final class Account
     /**
      * 对外安全字段
      *
+     * bindings 让前端一眼看清"哪些已绑定、哪些还能绑"，
+     * 不用去猜 email 为 null 到底是没绑还是没验证。
+     *
      * @return array<string,mixed>
      */
     public function toPublicArray()
@@ -147,6 +177,15 @@ final class Account
             'country_id'        => $this->countryId(),
             'simpass_uid'       => $this->simpassUid(),
             'simpass_level'     => $this->simpassLevel(),
+            'fanverify_uid'     => $this->fanverifyUid(),
+            'bindings'          => array(
+                // 必填且不可解绑
+                'player'    => true,
+                'simpass'   => $this->simpassUid() !== null,
+                // 可选绑定
+                'email'     => $this->hasEmail(),
+                'fanverify' => $this->hasFanVerify(),
+            ),
             'created_at'        => $this->createdAt(),
             'last_login_at'     => $this->lastLoginAt(),
         );
@@ -167,7 +206,9 @@ final class Account
             $profile['role'] = $this->role();
         }
 
-        if (in_array('email', $scopes, true)) {
+        if (in_array('email', $scopes, true) && $this->hasEmail()) {
+            // 未绑定邮箱时整块省略，第三方据此判断"该用户没有邮箱"，
+            // 而不是拿到一个 null 去猜
             $profile['email'] = $this->email();
             $profile['email_verified'] = $this->isEmailVerified();
         }
@@ -188,6 +229,12 @@ final class Account
             $profile['simpass'] = array(
                 'uid'   => $this->simpassUid(),
                 'level' => $this->simpassLevel(),
+            );
+        }
+
+        if (in_array('fanverify', $scopes, true) && $this->hasFanVerify()) {
+            $profile['fanverify'] = array(
+                'uid' => $this->fanverifyUid(),
             );
         }
 

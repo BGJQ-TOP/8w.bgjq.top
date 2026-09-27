@@ -21,8 +21,7 @@
 require_once __DIR__ . '/../src/bootstrap.php';
 
 use W8\Passport\Application;
-use W8\Passport\Directory\CountryDirectory;
-use W8\Passport\Directory\CountryProfile;
+use W8\Passport\Directory\CountryDirectory;use W8\Passport\Directory\CountryProfile;
 use W8\Passport\Directory\PlayerDirectory;
 use W8\Passport\Directory\PlayerProfile;
 use W8\Passport\Directory\Providers\HttpCountryProvider;
@@ -31,8 +30,10 @@ use W8\Passport\Directory\Providers\UnavailableCountryProvider;
 use W8\Passport\Directory\Providers\UnavailablePlayerProvider;
 use W8\Passport\Http\ApiException;
 use W8\Passport\Http\Response;
+use W8\Passport\Identity\Account;
 use W8\Passport\Identity\AccountRepository;
 use W8\Passport\Identity\Authenticator;
+use W8\Passport\Identity\BindingService;
 use W8\Passport\Identity\RegistrationService;
 use W8\Passport\Identity\SessionStore;
 use W8\Passport\OAuth\OAuthServer;
@@ -45,8 +46,10 @@ use W8\Passport\Support\Logger;
 use W8\Passport\Support\Str;
 use W8\Passport\Verification\EmailCodeService;
 use W8\Passport\Verification\HttpEmailVerifier;
+use W8\Passport\Verification\HttpFanVerifyVerifier;
 use W8\Passport\Verification\HttpSimpassVerifier;
 use W8\Passport\Verification\UnavailableEmailVerifier;
+use W8\Passport\Verification\UnavailableFanVerifyVerifier;
 use W8\Passport\Verification\UnavailableSimpassVerifier;
 
 // ============================================================================
@@ -161,6 +164,87 @@ check('has 判断', Scope::has(array('basic', 'player'), 'player'));
 check('directory 是机器 scope', in_array('directory', Scope::MACHINE_SCOPES, true));
 check('offline_access 已定义', isset(Scope::MAP['offline_access']));
 check('basic 在 MAP 中', isset(Scope::MAP['basic']));
+check('fanverify scope 已定义', isset(Scope::MAP['fanverify']));
+check('email scope 说明提到"未绑定"', strpos(Scope::MAP['email'], '未绑定') !== false);
+check('fanverify 不是机器 scope（属于用户身份）', !in_array('fanverify', Scope::MACHINE_SCOPES, true));
+
+// ----------------------------------------------------------------------------
+
+section('Identity\\Account —— 可选绑定语义');
+
+$accountWithEmail = Account::fromRow(array(
+    'id' => 1,
+    'username' => 'louie',
+    'email' => 'louie@example.com',
+    'email_verified_at' => '2026-01-01 00:00:00',
+    'password_hash' => '$2y$10$abcdefghijklmnopqrstuv',
+    'role' => 'observer',
+    'status' => 1,
+    'player_name' => 'LouieMAIN',
+    'player_id' => 1001,
+    'country_id' => 7,
+    'simpass_uid' => 10086,
+    'simpass_level' => 3,
+    'fanverify_uid' => 555,
+    'created_at' => '2026-01-01 00:00:00',
+));
+
+check('有邮箱时 hasEmail 为 true', $accountWithEmail->hasEmail());
+check('有邮箱时 isEmailVerified 为 true', $accountWithEmail->isEmailVerified());
+check('FanVerify 已绑定', $accountWithEmail->hasFanVerify());
+checkSame('FanVerify UID', 555, $accountWithEmail->fanverifyUid());
+
+$bindings = $accountWithEmail->toPublicArray()['bindings'];
+checkSame('bindings 覆盖四种绑定', array('player', 'simpass', 'email', 'fanverify'), array_keys($bindings));
+check('player 标记为已绑定', $bindings['player'] === true);
+check('email 标记为已绑定', $bindings['email'] === true);
+check('fanverify 标记为已绑定', $bindings['fanverify'] === true);
+
+// 未绑定邮箱 / FanVerify 的账号（这是新的默认形态）
+$bareAccount = Account::fromRow(array(
+    'id' => 2,
+    'username' => 'nomail',
+    'email' => null,
+    'email_verified_at' => null,
+    'password_hash' => '$2y$10$abcdefghijklmnopqrstuv',
+    'role' => 'observer',
+    'status' => 1,
+    'player_name' => 'Nobody',
+    'player_id' => null,
+    'country_id' => null,
+    'simpass_uid' => 20000,
+    'simpass_level' => null,
+    'fanverify_uid' => null,
+    'created_at' => '2026-01-01 00:00:00',
+));
+
+checkSame('未绑定邮箱时 email() 返回 null', null, $bareAccount->email());
+check('未绑定邮箱时 hasEmail 为 false', !$bareAccount->hasEmail());
+check('未绑定邮箱时 isEmailVerified 为 false（不能因为 email_verified_at 为 null 就崩）', !$bareAccount->isEmailVerified());
+check('未绑定 FanVerify 时 hasFanVerify 为 false', !$bareAccount->hasFanVerify());
+checkSame('未绑定时 bindings 为 false', false, $bareAccount->toPublicArray()['bindings']['email']);
+checkSame('未绑定时 bindings.fanverify 为 false', false, $bareAccount->toPublicArray()['bindings']['fanverify']);
+
+// userinfo 裁剪：未绑定的 scope 整块省略，而不是返回 null 让第三方猜
+$bareProfile = $bareAccount->toProfileArray(array('basic', 'email', 'player', 'simpass', 'fanverify'));
+check('未绑定邮箱时 userinfo 不含 email 字段', !array_key_exists('email', $bareProfile));
+check('未绑定 FanVerify 时 userinfo 不含 fanverify 字段', !array_key_exists('fanverify', $bareProfile));
+check('必填的 simpass 仍在 userinfo 中', array_key_exists('simpass', $bareProfile));
+check('sub 始终存在', isset($bareProfile['sub']));
+
+$fullProfile = $accountWithEmail->toProfileArray(array('basic', 'email', 'fanverify'));
+check('已绑定邮箱时 userinfo 含 email', isset($fullProfile['email']));
+check('已绑定 FanVerify 时 userinfo 含 fanverify', isset($fullProfile['fanverify']));
+
+// ----------------------------------------------------------------------------
+
+section('未接入的可选绑定 —— 只挡绑定，不挡注册');
+
+checkThrows('FanVerify 数据源未配置时抛 not_implemented', function () {
+    (new UnavailableFanVerifyVerifier())->verify(555, '123456', 'LouieMAIN');
+}, 'not_implemented');
+
+check('FanVerify 未配置时 isConfigured() 为 false', !(new UnavailableFanVerifyVerifier())->isConfigured());
 
 // ----------------------------------------------------------------------------
 
@@ -396,6 +480,28 @@ if (is_file($sqlPath)) {
         check('能解析 users 视图定义', false);
     }
 
+    // 规格要求：邮箱与 FanVerify 都是"可选绑定"，所以必须允许 NULL
+    preg_match('/CREATE TABLE IF NOT EXISTS `passport_accounts` \((.*?)\n\) ENGINE/s', $sql, $ma);
+    if (isset($ma[1])) {
+        $accountBody = $ma[1];
+
+        check(
+            'passport_accounts.email 允许 NULL（可选绑定）',
+            preg_match('/`email`\s+VARCHAR\(\d+\)\s+NULL/', $accountBody) === 1
+        );
+        check('passport_accounts 含 fanverify_uid 字段', strpos($accountBody, '`fanverify_uid`') !== false);
+        check('passport_accounts 含 fanverify_verified_at 字段', strpos($accountBody, '`fanverify_verified_at`') !== false);
+        check('fanverify_uid 允许 NULL', preg_match('/`fanverify_uid`\s+BIGINT UNSIGNED NULL/', $accountBody) === 1);
+        check('简幻通字段仍为必填语义（注册必填）', strpos($accountBody, '`simpass_uid`') !== false);
+        check('唯一索引覆盖 email', strpos($accountBody, 'UNIQUE KEY `uk_email`') !== false);
+        check('唯一索引覆盖 simpass_uid', strpos($accountBody, 'UNIQUE KEY `uk_simpass_uid`') !== false);
+        check('唯一索引覆盖 fanverify_uid', strpos($accountBody, 'UNIQUE KEY `uk_fanverify_uid`') !== false);
+        check('唯一索引覆盖 player_name', strpos($accountBody, 'UNIQUE KEY `uk_player_name`') !== false);
+        check('password_hash 不允许 NULL', preg_match('/`password_hash`\s+VARCHAR\(\d+\)\s+NOT NULL/', $accountBody) === 1);
+    } else {
+        check('能解析 passport_accounts 表结构', false);
+    }
+
     // 规格要求：玩家只保留三个字段
     preg_match('/CREATE TABLE IF NOT EXISTS `players` \((.*?)\n\) ENGINE/s', $sql, $m);
     if (isset($m[1])) {
@@ -450,6 +556,7 @@ check('玩家数据源未配置 -> UnavailablePlayerProvider', $app->playerProvi
 check('邦国数据源未配置 -> UnavailableCountryProvider', $app->countryProvider() instanceof UnavailableCountryProvider);
 check('邮件接口未配置 -> UnavailableEmailVerifier', $app->emailVerifier() instanceof UnavailableEmailVerifier);
 check('简幻通未配置 -> UnavailableSimpassVerifier', $app->simpassVerifier() instanceof UnavailableSimpassVerifier);
+check('FanVerify 未配置 -> UnavailableFanVerifyVerifier', $app->fanVerifyVerifier() instanceof UnavailableFanVerifyVerifier);
 
 // 配置齐全时必须自动换成 HTTP 实现，无需改代码
 Application::reset();
@@ -459,17 +566,20 @@ Application::boot(new Config(W8_PASSPORT_ROOT, array(
     'EMAIL_API_URL' => 'https://mail.example.com/send',
     'SIMPASS_API_URL' => 'https://pass.example.com/auth',
     'SIMPPASS_ACCESS_TOKEN' => 'token',
+    'FANVERIFY_API_URL' => 'https://fanverify.example.com/verify',
 )));
 $app = Application::instance();
 check('配置了 PLAYER_API_BASE -> HttpPlayerProvider', $app->playerProvider() instanceof HttpPlayerProvider);
 check('配置了 COUNTRY_API_BASE -> HttpCountryProvider', $app->countryProvider() instanceof HttpCountryProvider);
 check('配置了 EMAIL_API_URL -> HttpEmailVerifier', $app->emailVerifier() instanceof HttpEmailVerifier);
 check('配置了 SIMPASS_API_URL -> HttpSimpassVerifier', $app->simpassVerifier() instanceof HttpSimpassVerifier);
+check('配置了 FANVERIFY_API_URL -> HttpFanVerifyVerifier', $app->fanVerifyVerifier() instanceof HttpFanVerifyVerifier);
 
 // 各服务都能被装配出来（构造过程不应建立数据库连接）
 check('accounts 装配正确', $app->accounts() instanceof AccountRepository);
 check('sessions 装配正确', $app->sessions() instanceof SessionStore);
 check('authenticator 装配正确', $app->authenticator() instanceof Authenticator);
+check('bindings 装配正确', $app->bindings() instanceof BindingService);
 check('players 装配正确', $app->players() instanceof PlayerDirectory);
 check('countries 装配正确', $app->countries() instanceof CountryDirectory);
 check('emailCodes 装配正确', $app->emailCodes() instanceof EmailCodeService);

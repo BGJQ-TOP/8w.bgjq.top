@@ -4,6 +4,7 @@ namespace W8\Passport;
 
 use W8\Passport\Contracts\CountryProvider;
 use W8\Passport\Contracts\EmailVerifier;
+use W8\Passport\Contracts\FanVerifyVerifier;
 use W8\Passport\Contracts\PlayerProvider;
 use W8\Passport\Contracts\SimpassVerifier;
 use W8\Passport\Directory\CountryDirectory;
@@ -14,6 +15,7 @@ use W8\Passport\Directory\Providers\UnavailableCountryProvider;
 use W8\Passport\Directory\Providers\UnavailablePlayerProvider;
 use W8\Passport\Identity\AccountRepository;
 use W8\Passport\Identity\Authenticator;
+use W8\Passport\Identity\BindingService;
 use W8\Passport\Identity\RegistrationService;
 use W8\Passport\Identity\SessionStore;
 use W8\Passport\OAuth\AuthorizationCodeRepository;
@@ -26,8 +28,10 @@ use W8\Passport\Support\HttpClient;
 use W8\Passport\Support\Logger;
 use W8\Passport\Verification\EmailCodeService;
 use W8\Passport\Verification\HttpEmailVerifier;
+use W8\Passport\Verification\HttpFanVerifyVerifier;
 use W8\Passport\Verification\HttpSimpassVerifier;
 use W8\Passport\Verification\UnavailableEmailVerifier;
+use W8\Passport\Verification\UnavailableFanVerifyVerifier;
 use W8\Passport\Verification\UnavailableSimpassVerifier;
 
 /**
@@ -67,6 +71,9 @@ final class Application
 
     /** @var SimpassVerifier|null */
     private $simpassVerifier;
+
+    /** @var FanVerifyVerifier|null */
+    private $fanVerifyVerifier;
 
     /** @var array<string,object> */
     private $services = array();
@@ -203,7 +210,23 @@ final class Application
                 $this->countries(),
                 $this->emailCodes(),
                 $this->simpassVerifier(),
+                $this->fanVerifyVerifier(),
                 $this->config,
+                $this->logger()
+            );
+        });
+    }
+
+    /**
+     * 绑定管理（可选绑定：邮箱 / FanVerify）
+     */
+    public function bindings()
+    {
+        return $this->shared('bindings', function () {
+            return new BindingService(
+                $this->accounts(),
+                $this->emailCodes(),
+                $this->fanVerifyVerifier(),
                 $this->logger()
             );
         });
@@ -284,6 +307,16 @@ final class Application
         return $this->simpassVerifier;
     }
 
+    public function fanVerifyVerifier()
+    {
+        if ($this->fanVerifyVerifier === null) {
+            $this->fanVerifyVerifier = $this->config->has('FANVERIFY_API_URL')
+                ? new HttpFanVerifyVerifier($this->config, $this->http(), $this->logger())
+                : new UnavailableFanVerifyVerifier();
+        }
+        return $this->fanVerifyVerifier;
+    }
+
     // ========================================================================
     //  OAuth2
     // ========================================================================
@@ -346,7 +379,7 @@ final class Application
     /**
      * 运行期覆盖绑定（测试 / 定制部署用）
      *
-     * @param string $name players|countries|email_verifier|simpass_verifier|player_provider|country_provider
+     * @param string $name players|countries|email_verifier|simpass_verifier|fanverify_verifier|player_provider|country_provider
      * @param object $instance
      */
     public function bind($name, $instance)
@@ -363,6 +396,9 @@ final class Application
                 break;
             case 'simpass_verifier':
                 $this->simpassVerifier = $instance;
+                break;
+            case 'fanverify_verifier':
+                $this->fanVerifyVerifier = $instance;
                 break;
             default:
                 $this->services[$name] = $instance;

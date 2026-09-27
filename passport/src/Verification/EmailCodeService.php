@@ -64,7 +64,7 @@ final class EmailCodeService
      * 下发验证码
      *
      * @param string $email
-     * @param string $scene register / rebind / reset
+     * @param string $scene register / bind / reset
      * @return int 有效期秒数
      */
     public function issue($email, $scene = 'register')
@@ -220,10 +220,26 @@ final class EmailCodeService
         return strtolower(trim((string) $email));
     }
 
+    /**
+     * 场景白名单
+     *
+     * register 注册时绑定邮箱
+     * bind     登录后补绑邮箱（可选绑定）
+     * reset    找回密码（接口接入后启用）
+     *
+     * @param string $scene
+     * @return string
+     */
     private function normalizeScene($scene)
     {
         $scene = strtolower(trim((string) $scene));
-        return in_array($scene, array('register', 'rebind', 'reset'), true) ? $scene : 'register';
+
+        // 兼容旧写法
+        if ($scene === 'rebind') {
+            $scene = 'bind';
+        }
+
+        return in_array($scene, array('register', 'bind', 'reset'), true) ? $scene : 'register';
     }
 
     private function clientIp()

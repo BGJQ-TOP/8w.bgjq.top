@@ -79,7 +79,7 @@ final class Config
         'SIMPASS_API_LEVEL_FIELD'  => '',
         'SIMPASS_API_PLAYER_FIELD' => '',
 
-        // ---------- 邮箱验证码（TODO：接口待对接）----------
+        // ---------- 邮箱验证码（可选绑定；TODO：接口待对接）----------
         'EMAIL_API_URL'            => '',
         'EMAIL_API_TOKEN'          => '',
         'EMAIL_API_TIMEOUT'        => '8',
@@ -89,6 +89,17 @@ final class Config
         'EMAIL_API_MESSAGE_FIELD'  => '',
         'EMAIL_CODE_TTL'           => '600',
         'EMAIL_FROM_NAME'          => '8W通行证',
+
+        // ---------- FanVerify 账号（可选绑定；TODO：接口待对接）----------
+        'FANVERIFY_API_URL'          => '',
+        'FANVERIFY_API_TOKEN'        => '',
+        'FANVERIFY_API_TIMEOUT'      => '8',
+        'FANVERIFY_API_METHOD'       => 'POST',
+        'FANVERIFY_API_SUCCESS_CODE' => '200',
+        'FANVERIFY_API_CODE_FIELD'   => '',
+        'FANVERIFY_API_MESSAGE_FIELD' => '',
+        'FANVERIFY_API_UID_FIELD'    => '',
+        'FANVERIFY_API_PLAYER_FIELD' => '',
     );
 
     public function __construct($rootPath, array $values = array())
