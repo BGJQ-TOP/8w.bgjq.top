@@ -136,15 +136,20 @@ final class SessionStore
     /**
      * 在线账号数（"在线代表"的来源）
      *
+     * 时间阈值在 PHP 侧算好再传入，避免依赖 `INTERVAL ? SECOND` 这类
+     * 参数化写法在不同 MySQL/MariaDB 版本上的兼容性差异。
+     *
      * @param int $withinSeconds
      * @return int
      */
     public function onlineCount($withinSeconds = 300)
     {
+        $threshold = date('Y-m-d H:i:s', time() - max(1, (int) $withinSeconds));
+
         return (int) $this->db->selectValue(
             'SELECT COUNT(DISTINCT `account_id`) FROM `passport_sessions`
-             WHERE `expires_at` > NOW() AND `last_seen_at` > DATE_SUB(NOW(), INTERVAL ? SECOND)',
-            array(max(1, (int) $withinSeconds))
+             WHERE `expires_at` > NOW() AND `last_seen_at` > ?',
+            array($threshold)
         );
     }
 

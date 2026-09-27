@@ -2,7 +2,6 @@
 
 namespace W8\Passport;
 
-use RuntimeException;
 use W8\Passport\Contracts\CountryProvider;
 use W8\Passport\Contracts\EmailVerifier;
 use W8\Passport\Contracts\PlayerProvider;
@@ -86,29 +85,47 @@ final class Application
     /**
      * 装配应用（幂等）
      *
+     * 传入 $config 可覆盖默认装配（测试或定制部署用）。
+     *
      * @param Config|null $config
      * @return Application
      */
     public static function boot(Config $config = null)
     {
         if (self::$instance === null) {
-            if ($config === null) {
-                $config = Config::fromEnvFile(W8_PASSPORT_ROOT);
-            }
-            self::$instance = new self($config);
+            self::$instance = new self($config !== null ? $config : self::defaultConfig());
         }
         return self::$instance;
     }
 
     /**
+     * 获取应用实例；尚未装配时自动装配
+     *
+     * 刻意做成"自动装配"而不是"必须显式 boot"：
+     * 少一个必须记得调用的前置步骤，就少一整类"忘了启动"的线上故障。
+     *
      * @return Application
      */
     public static function instance()
     {
         if (self::$instance === null) {
-            throw new RuntimeException('通行证应用尚未启动，请先 require bootstrap.php');
+            self::boot();
         }
         return self::$instance;
+    }
+
+    /**
+     * 从项目根目录的 .env 装配默认配置
+     *
+     * @return Config
+     */
+    private static function defaultConfig()
+    {
+        $root = defined('W8_PASSPORT_ROOT')
+            ? W8_PASSPORT_ROOT
+            : dirname(__DIR__, 2);
+
+        return Config::fromEnvFile($root);
     }
 
     /**

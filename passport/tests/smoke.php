@@ -20,17 +20,32 @@
 
 require_once __DIR__ . '/../src/bootstrap.php';
 
+use W8\Passport\Application;
+use W8\Passport\Directory\CountryDirectory;
 use W8\Passport\Directory\CountryProfile;
+use W8\Passport\Directory\PlayerDirectory;
 use W8\Passport\Directory\PlayerProfile;
+use W8\Passport\Directory\Providers\HttpCountryProvider;
+use W8\Passport\Directory\Providers\HttpPlayerProvider;
 use W8\Passport\Directory\Providers\UnavailableCountryProvider;
 use W8\Passport\Directory\Providers\UnavailablePlayerProvider;
 use W8\Passport\Http\ApiException;
 use W8\Passport\Http\Response;
+use W8\Passport\Identity\AccountRepository;
+use W8\Passport\Identity\Authenticator;
+use W8\Passport\Identity\RegistrationService;
+use W8\Passport\Identity\SessionStore;
+use W8\Passport\OAuth\OAuthServer;
 use W8\Passport\OAuth\Scope;
 use W8\Passport\Support\Arr;
 use W8\Passport\Support\Config;
+use W8\Passport\Support\HttpClient;
 use W8\Passport\Support\HttpResponse;
+use W8\Passport\Support\Logger;
 use W8\Passport\Support\Str;
+use W8\Passport\Verification\EmailCodeService;
+use W8\Passport\Verification\HttpEmailVerifier;
+use W8\Passport\Verification\HttpSimpassVerifier;
 use W8\Passport\Verification\UnavailableEmailVerifier;
 use W8\Passport\Verification\UnavailableSimpassVerifier;
 
@@ -390,6 +405,68 @@ if (is_file($sqlPath)) {
 
     check('没有残留未替换的占位符（除密码外）', preg_match('/__(?!DB_PASSWORD__)[A-Z_]+__/', $sql) !== 1);
 }
+
+// ============================================================================
+
+section('Application —— 依赖装配（最容易"忘了启动"的地方）');
+
+$app = Application::boot(new Config(W8_PASSPORT_ROOT, array(
+    'DB_NAME' => 'bgjq8w',
+    'DB_USER' => 'bgjq8w',
+    'DB_PASS' => 'not-a-real-password',
+)));
+
+check('boot 返回 Application', $app instanceof Application);
+check('instance() 与 boot() 是同一个实例', Application::instance() === $app);
+check('config 装配正确', $app->config() instanceof Config);
+check('logger 装配正确', $app->logger() instanceof Logger);
+check('http 客户端装配正确', $app->http() instanceof HttpClient);
+
+// 未配置外部接口时，必须落到"明确报错"的 Null Object 上
+check('玩家数据源未配置 -> UnavailablePlayerProvider', $app->playerProvider() instanceof UnavailablePlayerProvider);
+check('邦国数据源未配置 -> UnavailableCountryProvider', $app->countryProvider() instanceof UnavailableCountryProvider);
+check('邮件接口未配置 -> UnavailableEmailVerifier', $app->emailVerifier() instanceof UnavailableEmailVerifier);
+check('简幻通未配置 -> UnavailableSimpassVerifier', $app->simpassVerifier() instanceof UnavailableSimpassVerifier);
+
+// 配置齐全时必须自动换成 HTTP 实现，无需改代码
+Application::reset();
+Application::boot(new Config(W8_PASSPORT_ROOT, array(
+    'PLAYER_API_BASE' => 'https://game.example.com',
+    'COUNTRY_API_BASE' => 'https://game.example.com',
+    'EMAIL_API_URL' => 'https://mail.example.com/send',
+    'SIMPASS_API_URL' => 'https://pass.example.com/auth',
+    'SIMPPASS_ACCESS_TOKEN' => 'token',
+)));
+$app = Application::instance();
+check('配置了 PLAYER_API_BASE -> HttpPlayerProvider', $app->playerProvider() instanceof HttpPlayerProvider);
+check('配置了 COUNTRY_API_BASE -> HttpCountryProvider', $app->countryProvider() instanceof HttpCountryProvider);
+check('配置了 EMAIL_API_URL -> HttpEmailVerifier', $app->emailVerifier() instanceof HttpEmailVerifier);
+check('配置了 SIMPASS_API_URL -> HttpSimpassVerifier', $app->simpassVerifier() instanceof HttpSimpassVerifier);
+
+// 各服务都能被装配出来（构造过程不应建立数据库连接）
+check('accounts 装配正确', $app->accounts() instanceof AccountRepository);
+check('sessions 装配正确', $app->sessions() instanceof SessionStore);
+check('authenticator 装配正确', $app->authenticator() instanceof Authenticator);
+check('players 装配正确', $app->players() instanceof PlayerDirectory);
+check('countries 装配正确', $app->countries() instanceof CountryDirectory);
+check('emailCodes 装配正确', $app->emailCodes() instanceof EmailCodeService);
+check('oauth 装配正确', $app->oauth() instanceof OAuthServer);
+check('registration 装配正确', $app->registration() instanceof RegistrationService);
+
+// 懒加载：同一个服务重复取必须拿到同一个对象
+check('服务是单例', $app->oauth() === $app->oauth() && $app->accounts() === $app->accounts());
+
+check('markApiContext 可记录调用上下文', (function () use ($app) {
+    $app->markApiContext('client-abc', 42);
+    return $app->currentClientId() === 'client-abc' && $app->currentAccountId() === 42;
+})());
+
+Application::reset();
+check('reset 后 instance() 会自动重新装配', Application::instance() instanceof Application);
+
+// 恢复到默认装配，避免影响后续用例
+Application::reset();
+Application::boot(new Config(W8_PASSPORT_ROOT, array('DB_NAME' => 'bgjq8w', 'DB_USER' => 'bgjq8w', 'DB_PASS' => 'x')));
 
 // ============================================================================
 
