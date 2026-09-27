@@ -321,16 +321,38 @@ mysql -u root -p < 8w_passport.rendered.sql
 
 ## 五、前端变化
 
-| 位置 | 变化 |
+### 5.1 注册入口统一到 `/passport/`
+
+站内**所有**页面顶栏的「注册」都从 `<button id="showRegisterBtn">` 改为
+`<a class="nes-btn" id="showRegisterBtn" href="/passport/">`，同时删除了各自的旧注册弹窗
+（`#registerModal` / `#registerForm`，含用户名、密码、确认密码、游戏ID、所属邦国、简幻通UID、简幻通验证码等字段），
+原位置留下一句注释：`<!-- 注册入口已统一收敛到 8W通行证系统（/passport/），站内不再保留第二套注册表单 -->`。
+
+| 文件 | 注册入口 | 旧注册弹窗 |
+| --- | --- | --- |
+| `index.html` | 改为指向 `/passport/` 的链接 | 已删除 |
+| `index.php` | 改为指向 `/passport/` 的链接 | 已删除 |
+| `assembly.php` | 改为指向 `/passport/` 的链接 | 已删除 |
+| `court.php` | 改为指向 `/passport/` 的链接 | 已删除 |
+| `parliament.php` | 改为指向 `/passport/` 的链接 | 已删除 |
+| `world-news.php` | 改为指向 `/passport/` 的链接 | 已删除 |
+| `complaint.html` | 改为指向 `/passport/` 的链接 | 已删除 |
+| `services.html` | 改为指向 `/passport/` 的链接 | 已删除 |
+| `admin.html` | 无注册入口 | 已删除 |
+| `js/main.js` | `initRegisterModal()` → `initRegisterEntry()`：`<a>` 形态直接跳转，`<button>` 形态由脚本接管跳转到 `/passport/` | 弹窗交互代码全部删除 |
+
+### 5.2 其它前端/页面调整
+
+| 文件 | 变化 |
 | --- | --- |
-| `index.html` | 顶栏「注册」由 `<button id="showRegisterBtn">` 改为 `<a class="nes-btn" id="showRegisterBtn" href="/passport/">`；页面底部的旧注册弹窗（`#registerModal`，含用户名/密码/确认密码/游戏ID/所属邦国/简幻通UID/简幻通验证码）整体删除，替换为一句注释说明注册入口已收敛 |
-| `admin.html` | 同样删除旧注册弹窗；后台「添加用户」表单把「游戏ID + 所属邦国」改为「验证邮箱 + 游戏内玩家名」，并提示所属邦国由权威接口自动识别 |
-| `js/main.js` | 删除 `initRegisterModal()` 及弹窗全部交互（打开/关闭/提交 `/auth.php?action=register`），替换为 `initRegisterEntry()`：`<a>` 形态直接跳转，`<button>` 形态由脚本接管跳转到 `/passport/`；启动流程里相应改为调用 `initRegisterEntry()` |
+| `admin.html` | 后台「添加用户」表单把「游戏ID + 所属邦国」改为「验证邮箱 + 游戏内玩家名」，并提示所属邦国由权威接口自动识别（对应 `Auth::provision()` 的字段） |
+| `reset-password.html` | 删除「简幻通UID」「简幻通验证码」两个字段，改为提示「身份已由 8W通行证统一托管，验证原密码即可修改；忘记密码请通过邮箱找回（待邮箱接口接入后开放）」；新密码提示由「至少6个字符」改为「至少8个字符」，与通行证的密码强度下限一致 |
+| `index.php`、`assembly.php`、`court.php`、`parliament.php`、`world-news.php` | 生产环境下 `ini_set('display_errors', '0')` / `ini_set('display_startup_errors', '0')`，错误只进日志、不再输出到页面 |
 | 登录 | 登录弹窗保留（仍调 `/api/v1/auth.php?action=login`，走 `Auth` 兼容层） |
 
 **用户可见的变化**：全站注册只有一个入口 —— `https://<域名>/passport/`。
 注册需要同时通过邮箱验证码、游戏内玩家名权威校验、简幻通校验；登录后可在通行证中心查看
-账号信息、我的邦国、已授权的第三方应用，并修改密码。
+账号信息、我的邦国、已授权的第三方应用，并修改密码。改密不再需要简幻通验证码。
 
 ---
 
