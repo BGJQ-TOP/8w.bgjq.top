@@ -126,39 +126,26 @@ sudo systemctl reload apache2
 
 #### 3.2 Nginx配置
 
-创建配置文件 `/etc/nginx/sites-available/bgjq`：
-
-```nginx
-server {
-    listen 80;
-    server_name 8w.bgjq.top;
-    root /var/www/8w.bgjq.top;
-    index index.html index.php;
-
-    location / {
-        try_files $uri $uri/ =404;
-    }
-
-    location ~ \.php$ {
-        fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
-        fastcgi_index index.php;
-        include fastcgi_params;
-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-    }
-
-    location ~ /\.(?!well-known).* {
-        deny all;
-    }
-}
-```
-
-启用站点：
+**直接使用仓库根目录的 `nginx-8w.bgjq.top.conf`**，它已经包含社区站点与
+8W通行证系统（含 `/oauth/*` 与 `/passport/api/*`）的全部路由、静态缓存与安全头：
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/bgjq /etc/nginx/sites-enabled/
+sudo cp nginx-8w.bgjq.top.conf /etc/nginx/sites-available/8w.bgjq.top
+sudo ln -sf /etc/nginx/sites-available/8w.bgjq.top /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl reload nginx
 ```
+
+其中与通行证相关的关键规则：
+
+| 规则 | 作用 |
+|---|---|
+| `location ^~ /passport/src/`、`/passport/storage/` | `deny all`，源码与日志禁止直接访问 |
+| `location ^~ /passport/assets/` | 通行证静态资源，缓存 7 天 |
+| `location ~ ^/passport/api/(v1\|oauth)/([a-z0-9_-]+)$` | 美化 URL → 对应 `.php` |
+| `location ~ ^/oauth/(authorize\|token\|userinfo\|introspect\|revoke)$` | OAuth 2.0 标准端点 |
+
+`/passport/` 由 server 段的 `index index.php` 落到 `passport/index.php`，无需额外规则。
 
 ### 4. 文件权限
 
@@ -190,6 +177,18 @@ sudo apt install php php-mysql php-curl php-json php-mbstring
 sudo yum install php php-mysqlnd php-curl php-json php-mbstring
 ```
 
+8W通行证系统额外依赖（缺一不可）：
+
+| 扩展 | 用途 |
+|---|---|
+| `pdo_mysql` | 数据库访问（通行证与社区站点共用） |
+| `curl` | 调用邮箱验证码 / 游戏内玩家 / 邦国 / 简幻通四个外部接口 |
+| `openssl` | 生成密码学安全随机数（会话令牌、OAuth 令牌、验证码） |
+| `mbstring` | 中文与多字节字符串处理 |
+
+缺失时不会静默降级：`HttpClient` 会在 cURL 不可用时明确报错，
+`Str` 会在 `random_bytes` 不可用时回退到 `openssl_random_pseudo_bytes`。
+
 检查 `php.ini` 配置：
 
 ```ini
@@ -220,14 +219,37 @@ date.timezone = Asia/Shanghai
 
 管理员角色为 `secretary_general`，可用 `.env` 的 `PASSPORT_ADMIN_ROLES` 调整。
 
-### 7. 测试
+### 7. 定时维护（建议配置）
+
+通行证会产生会话、授权码、令牌与调用日志，建议每天清理一次过期数据：
+
+```bash
+crontab -e
+```
+
+```
+0 3 * * * /usr/bin/php /var/www/8w.bgjq.top/bin/maintenance.php >> /var/log/8w-passport-cron.log 2>&1
+```
+
+`bin/maintenance.php` 会清理过期的登录会话、授权码、令牌、邮箱验证码，
+以及超过 30 天的调用日志（可用 `--log-days=N` 调整）。
+
+### 8. 测试
+
+提交前先跑一遍闸门（全量 PHP 语法检查 + 通行证核心逻辑测试）：
+
+```bash
+pwsh ./bin/test.ps1
+```
+
+再访问网站验证：
 
 访问网站：https://8w.bgjq.top
 
 测试以下功能：
 - [ ] 页面加载正常
 - [ ] 数据库连接正常
-- [ ] 用户注册/登录
+- [ ] 通行证注册页可打开（`/passport/`）
 - [ ] 新闻查看
 - [ ] 提案查看
 - [ ] 投票功能（如已登录）
