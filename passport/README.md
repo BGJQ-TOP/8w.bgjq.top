@@ -62,7 +62,8 @@ passport/
 ├── assets/passport.css           通行证页面样式（用户中心与授权页共用）
 ├── src/
 │   ├── bootstrap.php             命名空间自动加载（W8\Passport\ → src/）+ passport() 全局入口
-│   ├── Application.php           依赖装配容器，全部懒加载
+│   ├── Application.php           依赖装配容器，全部懒加载；instance() 未装配时自动装配
+│   ├── Maintenance.php           维护任务：清理过期会话/授权码/令牌/邮箱验证码/调用日志
 │   ├── Support/                  无业务的基础设施
 │   │   ├── Config.php            .env 读取器（含全部默认值表）
 │   │   ├── Database.php          PDO 封装（懒连接、真预处理、事务）
@@ -106,7 +107,8 @@ passport/
 │       ├── TokenRepository.php   令牌仓库（签发/轮换/吊销）
 │       └── AuthorizationCodeRepository.php 授权码仓库（一次性消费）
 ├── tests/smoke.php               最小验证脚本（不依赖数据库与网络）
-└── storage/logs/                 运行期日志（.gitignore 排除，Nginx 已 deny）
+├── storage/logs/                 运行期日志（.gitignore 排除，Nginx 已 deny）
+└── （项目根的 bin/ 下有 init-database.ps1、test.ps1、maintenance.php 三个脚本）
 ```
 
 ---
@@ -144,6 +146,8 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
 | `api/*.php` | `Application`、`Http` | 端点里只写参数校验与响应组装，不写业务逻辑 |
 
 **换实现只改一处**：`Application::playerProvider()` / `countryProvider()` / `emailVerifier()` / `simpassVerifier()` 会根据 `.env` 是否配置对应键，自动在 HTTP 实现与 `Unavailable*` 之间选择；测试或定制部署可用 `Application::bind('player_provider', $obj)` 运行期覆盖。
+
+**装配是自动的**：`Application::boot()` 显式装配（幂等），而 `Application::instance()` 在尚未装配时会**自动装配**（从项目根的 `.env` 读配置）。刻意不做成「必须记得先 boot」——少一个前置步骤，就少一整类「忘了启动」的线上故障。`Application::reset()` 仅供测试重置单例。
 
 ---
 
@@ -416,9 +420,35 @@ pwsh ./bin/test.ps1
 ```
 
 该脚本先对全量 `.php` 文件跑 `php -l`（跳过 `vendor` / `node_modules` / `storage`），
-再运行 `passport/tests/smoke.php`（覆盖 `Arr` / `Str` / `Config` / `Scope` / 值对象 / `Response` /
-`ApiException` / `HttpResponse` / 未接入数据源的失败语义 / `database/8w_passport.sql` 结构自检）。
+再运行 `passport/tests/smoke.php`，覆盖九个部分：`Arr` 点路径取值、`Scope` 授权范围、`Str` 随机与哈希、
+`Config` 配置读取、`Directory` 权威数据值对象、`Http` 响应与异常格式、
+未接入接口的失败语义（关键：绝不静默放行）、`database/8w_passport.sql` 结构自检、
+`Application` 依赖装配（最容易「忘了启动」的地方）。
 两项全绿才允许提交。
+
+### 7.5 日常维护任务
+
+过期数据不会自己消失，建议每天跑一次清理（幂等，重复执行无副作用）：
+
+```bash
+# 每天凌晨 3 点清理一次（crontab）
+0 3 * * * /usr/bin/php /var/www/8w.bgjq.top/bin/maintenance.php >> /var/log/8w-passport-cron.log 2>&1
+
+# 调整调用日志保留天数（默认 30 天）
+php bin/maintenance.php --log-days=60
+```
+
+`Maintenance::run()` 依次清理五类数据并返回各项删除行数，同时记一条 `maintenance.done` 日志：
+
+| 项目 | 清理范围 |
+| --- | --- |
+| `sessions` | 已过期的登录会话（`passport_sessions.expires_at < NOW()`） |
+| `codes` | 过期授权码（保留 1 天便于排查） |
+| `tokens` | 过期令牌（访问与刷新令牌都超过 30 天才删） |
+| `email_codes` | 过期邮箱验证码（保留 1 天） |
+| `api_logs` | 调用日志（默认保留 30 天；它同时用于限流计数，不能清得太激进） |
+
+`bin/maintenance.php` 只允许 CLI 运行（非 CLI 直接返回 404）。
 
 ---
 
