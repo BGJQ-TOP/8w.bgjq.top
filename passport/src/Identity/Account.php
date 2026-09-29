@@ -81,6 +81,26 @@ final class Account
             ? (int) $this->attributes['fanverify_uid'] : null;
     }
 
+    public function fanverifyLevel()
+    {
+        return isset($this->attributes['fanverify_level']) && $this->attributes['fanverify_level'] !== null
+            ? (int) $this->attributes['fanverify_level'] : null;
+    }
+
+    /**
+     * FanVerify 风险标签
+     *
+     * @return string|null 无标签时为 null（FanVerify 用空串表示没有标签）
+     */
+    public function fanverifyTag()
+    {
+        $tag = isset($this->attributes['fanverify_tag']) ? $this->attributes['fanverify_tag'] : null;
+        if ($tag === null || trim((string) $tag) === '') {
+            return null;
+        }
+        return (string) $tag;
+    }
+
     public function fanverifyVerifiedAt()
     {
         return isset($this->attributes['fanverify_verified_at']) ? $this->attributes['fanverify_verified_at'] : null;
@@ -178,6 +198,8 @@ final class Account
             'simpass_uid'       => $this->simpassUid(),
             'simpass_level'     => $this->simpassLevel(),
             'fanverify_uid'     => $this->fanverifyUid(),
+            'fanverify_level'   => $this->fanverifyLevel(),
+            'fanverify_tag'     => $this->fanverifyTag(),
             'bindings'          => array(
                 // 必填且不可解绑
                 'player'    => true,
@@ -234,7 +256,9 @@ final class Account
 
         if (in_array('fanverify', $scopes, true) && $this->hasFanVerify()) {
             $profile['fanverify'] = array(
-                'uid' => $this->fanverifyUid(),
+                'uid'   => $this->fanverifyUid(),
+                'level' => $this->fanverifyLevel(),
+                'tag'   => $this->fanverifyTag(),
             );
         }
 

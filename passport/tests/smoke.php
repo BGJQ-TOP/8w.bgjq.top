@@ -46,6 +46,7 @@ use W8\Passport\Support\HttpResponse;
 use W8\Passport\Support\Logger;
 use W8\Passport\Support\Str;
 use W8\Passport\Verification\EmailCodeService;
+use W8\Passport\Verification\FanVerifyClient;
 use W8\Passport\Verification\HttpEmailVerifier;
 use W8\Passport\Verification\HttpFanVerifyVerifier;
 use W8\Passport\Verification\HttpSimpassVerifier;
@@ -567,14 +568,15 @@ Application::boot(new Config(W8_PASSPORT_ROOT, array(
     'EMAIL_API_URL' => 'https://mail.example.com/send',
     'SIMPASS_API_URL' => 'https://pass.example.com/auth',
     'SIMPPASS_ACCESS_TOKEN' => 'token',
-    'FANVERIFY_API_URL' => 'https://fanverify.example.com/verify',
+    'FANVERIFY_ACCESS_TOKEN' => 'dev_TESTTOKEN',
 )));
 $app = Application::instance();
 check('配置了 PLAYER_API_BASE -> HttpPlayerProvider', $app->playerProvider() instanceof HttpPlayerProvider);
 check('配置了 COUNTRY_API_BASE -> HttpCountryProvider', $app->countryProvider() instanceof HttpCountryProvider);
 check('配置了 EMAIL_API_URL -> HttpEmailVerifier', $app->emailVerifier() instanceof HttpEmailVerifier);
 check('配置了 SIMPASS_API_URL -> HttpSimpassVerifier', $app->simpassVerifier() instanceof HttpSimpassVerifier);
-check('配置了 FANVERIFY_API_URL -> HttpFanVerifyVerifier', $app->fanVerifyVerifier() instanceof HttpFanVerifyVerifier);
+check('配置了 FANVERIFY_ACCESS_TOKEN -> HttpFanVerifyVerifier', $app->fanVerifyVerifier() instanceof HttpFanVerifyVerifier);
+check('FanVerify 客户端可取出', $app->fanVerifyClient() instanceof FanVerifyClient);
 
 // 各服务都能被装配出来（构造过程不应建立数据库连接）
 check('accounts 装配正确', $app->accounts() instanceof AccountRepository);
@@ -614,6 +616,7 @@ $bindingService = new BindingService(
     new AccountRepository($bindingDb),
     new EmailCodeService($bindingDb, new UnavailableEmailVerifier(), $bindingApp->config(), $bindingApp->logger()),
     new UnavailableFanVerifyVerifier(),
+    $bindingApp->config(),
     $bindingApp->logger()
 );
 
@@ -699,6 +702,190 @@ checkThrows('重复绑定同一个 FanVerify -> 409', function () use ($bindingS
 }, 'conflict');
 
 // ============================================================================
+
+section('Verification\\FanVerifyClient —— 对接 fanverify.cn openAPI');
+
+/**
+ * 假的 HTTP 客户端：按 URL 关键词返回预设响应，并记录收到的 URL。
+ * 这样在没有网络、没有 cURL 扩展的环境下也能验证响应映射与 URL 构造。
+ */
+class FakeHttpClient extends HttpClient
+{
+    /** @var array<int,string> */
+    public $urls = array();
+
+    /** @var array<int,array{status:int,body:string}> */
+    public $queue = array();
+
+    /** @var array<string,array{status:int,body:string}> */
+    public $routes = array();
+
+    public function __construct()
+    {
+        // 不调用父类构造：不需要 Logger
+    }
+
+    /**
+     * @param string $needle URL 里包含这个片段时返回该响应
+     */
+    public function on($needle, $status, $body)
+    {
+        $this->routes[$needle] = array('status' => (int) $status, 'body' => (string) $body);
+        return $this;
+    }
+
+    private function reply($url)
+    {
+        $this->urls[] = $url;
+        foreach ($this->routes as $needle => $response) {
+            if (strpos($url, $needle) !== false) {
+                return new HttpResponse($response['status'], $response['body']);
+            }
+        }
+        return new HttpResponse(500, '{"error":"no route"}');
+    }
+
+    public function get($url, array $headers = array(), $timeout = 8)
+    {
+        return $this->reply($url);
+    }
+
+    public function postJson($url, array $jsonBody = array(), array $headers = array(), $timeout = 8)
+    {
+        return $this->reply($url);
+    }
+}
+
+$fvConfig = new Config(W8_PASSPORT_ROOT, array(
+    'FANVERIFY_API_BASE'     => 'https://api.fanverify.cn',
+    'FANVERIFY_ACCESS_TOKEN' => 'dev_TESTTOKEN',
+));
+
+$fvHttp = new FakeHttpClient();
+$fvLogger = new Logger(sys_get_temp_dir() . '/w8-test-logs', false);
+$fvClient = new FanVerifyClient($fvConfig, $fvHttp, $fvLogger);
+
+check('令牌已配置时 isConfigured 为 true', $fvClient->isConfigured());
+checkSame('默认根地址', 'https://api.fanverify.cn', $fvClient->baseUrl());
+
+check('未配令牌时 isConfigured 为 false', !(new FanVerifyClient(
+    new Config(W8_PASSPORT_ROOT, array()),
+    $fvHttp,
+    $fvLogger
+))->isConfigured());
+
+// ---- devinfo ----
+$fvHttp->on('/openapi/devinfo', 200, json_encode(array(
+    'Date_of_Issue' => '2026-07-12T15:54:56+08:00',
+    'bind_uid' => 100000,
+    'mode' => 'HTTP',
+    'need_end_level' => 1,
+    'service_message' => 'TEST',
+    'status' => 'ok',
+)));
+$info = $fvClient->developerInfo();
+checkSame('devinfo 绑定账号', 100000, $info['bind_uid']);
+checkSame('devinfo 对接模式', 'HTTP', $info['mode']);
+checkSame('devinfo 要求等级', 1, $info['need_end_level']);
+checkSame('devinfo 服务公告', 'TEST', $info['service_message']);
+check(
+    'devinfo 请求带上了 accesstoken 与正确路径',
+    strpos($fvHttp->urls[count($fvHttp->urls) - 1], '/openapi/devinfo?accesstoken=dev_TESTTOKEN') !== false,
+    end($fvHttp->urls)
+);
+
+// ---- user_verify 成功 ----
+$fvHttp->on('/openapi/user_verify', 200, json_encode(array(
+    'status' => 'ok',
+    'data' => array(array(
+        'level' => '3',
+        'reg_time' => '2026-07-14T08:22:38+08:00',
+        'tag' => '',
+        'uid' => 100002,
+    )),
+)));
+$identity = $fvClient->verifyUser(100002, '654321');
+checkSame('user_verify 返回 uid', 100002, $identity->uid());
+checkSame('user_verify 返回等级（字符串转 int）', 3, $identity->level());
+check('空字符串 tag 视为无标签', !$identity->hasTag());
+checkSame('无标签时 tag() 为 null', null, $identity->tag());
+checkSame('返回注册时间', '2026-07-14T08:22:38+08:00', $identity->regTime());
+
+$lastUrl = $fvHttp->urls[count($fvHttp->urls) - 1];
+check('user_verify 使用 uid 与 pass_code 参数', strpos($lastUrl, 'uid=100002') !== false && strpos($lastUrl, 'pass_code=654321') !== false, $lastUrl);
+
+// ---- user_verify 带风险标签 ----
+$fvHttp->on('/openapi/user_verify', 200, json_encode(array(
+    'status' => 'ok',
+    'data' => array(array('level' => '1', 'reg_time' => '', 'tag' => '疑似小号', 'uid' => 100003)),
+)));
+$tagged = $fvClient->verifyUser(100003, '111111');
+check('有标签时 hasTag 为 true', $tagged->hasTag());
+checkSame('标签内容', '疑似小号', $tagged->tag());
+
+// ---- user_verify 被拒（status 不是 ok）----
+$fvHttp->on('/openapi/user_verify', 200, json_encode(array('status' => 'fail')));
+checkThrows('user_verify 返回非 ok 状态 -> 422', function () use ($fvClient) {
+    $fvClient->verifyUser(100002, '000000');
+}, 'invalid_request');
+
+// ---- 401 ----
+$fvHttp->on('/openapi/devinfo', 401, '{"error":"Unauthorized"}');
+checkThrows('401 -> 500 且提示令牌问题', function () use ($fvClient) {
+    $fvClient->developerInfo();
+}, 'server_error');
+
+// ---- OTP 申请 ----
+$fvHttp->on('/openapi/otp', 200, '{"success":true,"data":{"otp":"0pO6gTXmtlzwOBNc"}}');
+checkSame('申请 OTP', '0pO6gTXmtlzwOBNc', $fvClient->requestOtp());
+
+$fvHttp->on('/openapi/otp', 200, '{"success":false,"data":{}}');
+checkThrows('申请 OTP 失败 -> 500', function () use ($fvClient) {
+    $fvClient->requestOtp();
+}, 'server_error');
+
+// ---- OTP 轮询：三种状态 ----
+$fvHttp->on('/openapi/seeotp', 200, '{"status":"wait"}');
+$polled = $fvClient->pollOtp('OTP123');
+checkSame('轮询 wait', 'wait', $polled['status']);
+checkSame('wait 时不返回身份', null, $polled['identity']);
+
+$fvHttp->on('/openapi/seeotp', 429, '{"status":"rate_limit"}');
+checkSame('轮询 rate_limit（429 不算错误）', 'rate_limit', $fvClient->pollOtp('OTP123')['status']);
+
+$fvHttp->on('/openapi/seeotp', 200, json_encode(array(
+    'status' => 'ok',
+    'data' => array(array('level' => '2', 'reg_time' => '2026-07-12T15:02:51+08:00', 'tag' => '', 'uid' => 100000)),
+)));
+$okPoll = $fvClient->pollOtp('OTP123');
+checkSame('轮询 ok', 'ok', $okPoll['status']);
+checkSame('轮询 ok 时返回 uid', 100000, $okPoll['identity']->uid());
+checkSame('轮询 ok 时返回等级', 2, $okPoll['identity']->level());
+
+$lastOtpUrl = $fvHttp->urls[count($fvHttp->urls) - 1];
+check('seeotp 使用 otp 参数', strpos($lastOtpUrl, '/openapi/seeotp?accesstoken=') !== false && strpos($lastOtpUrl, 'otp=OTP123') !== false, $lastOtpUrl);
+
+// ---- 二维码必须是 PNG ----
+$pngHeader = "\x89PNG\r\n\x1a\n" . str_repeat('x', 40);
+$fvHttp->on('/openapi/genqrcode', 200, $pngHeader);
+checkSame('genqrcode 返回二进制 PNG', $pngHeader, $fvClient->qrCodePng('OTP123'));
+
+$fvHttp->on('/openapi/genqrcode', 200, '<html>not an image</html>');
+checkThrows('genqrcode 返回非 PNG -> 500', function () use ($fvClient) {
+    $fvClient->qrCodePng('OTP123');
+}, 'server_error');
+
+// ---- getuserdata：403 表示"没被本开发者验证过" ----
+$fvHttp->on('/openapi/getuserdata', 403, '{"code":403}');
+checkSame('getuserdata 403 -> null（未验证过）', null, $fvClient->userData(999999));
+
+// ---- 未配置时所有方法都要明确报 not_implemented，不能静默成功 ----
+$bareClient = new FanVerifyClient(new Config(W8_PASSPORT_ROOT, array()), $fvHttp, $fvLogger);
+checkThrows('未配置令牌时 verifyUser 报错', function () use ($bareClient) {
+    $bareClient->developerInfo();
+}, 'not_implemented');
+
+// ----------------------------------------------------------------------------
 
 echo "\n";
 $passed = $GLOBALS['w8_passed'];

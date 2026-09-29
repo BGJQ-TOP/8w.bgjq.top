@@ -47,7 +47,29 @@ SET @has_col := (
 SET @sql := IF(@has_col = 0,
     'ALTER TABLE `passport_accounts`
         ADD COLUMN `fanverify_uid` BIGINT UNSIGNED NULL COMMENT ''FanVerify 账号ID（可选绑定；NULL = 未绑定）'' AFTER `simpass_verified_at`,
-        ADD COLUMN `fanverify_verified_at` DATETIME NULL COMMENT ''FanVerify 验证通过时间'' AFTER `fanverify_uid`',
+        ADD COLUMN `fanverify_level` TINYINT UNSIGNED NULL COMMENT ''FanVerify 等级（权威缓存）'' AFTER `fanverify_uid`,
+        ADD COLUMN `fanverify_tag` VARCHAR(64) NULL COMMENT ''FanVerify 风险标签（权威缓存）'' AFTER `fanverify_level`,
+        ADD COLUMN `fanverify_verified_at` DATETIME NULL COMMENT ''FanVerify 验证通过时间'' AFTER `fanverify_tag`',
+    'DO 0');
+
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+-- ----------------------------------------------------------------------------
+--  2b. 补 fanverify_level / fanverify_tag（针对只加过 fanverify_uid 的中间版本）
+-- ----------------------------------------------------------------------------
+SET @has_level := (
+    SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'passport_accounts'
+      AND COLUMN_NAME = 'fanverify_level'
+);
+
+SET @sql := IF(@has_level = 0,
+    'ALTER TABLE `passport_accounts`
+        ADD COLUMN `fanverify_level` TINYINT UNSIGNED NULL COMMENT ''FanVerify 等级（权威缓存）'' AFTER `fanverify_uid`,
+        ADD COLUMN `fanverify_tag` VARCHAR(64) NULL COMMENT ''FanVerify 风险标签（权威缓存）'' AFTER `fanverify_level`',
     'DO 0');
 
 PREPARE stmt FROM @sql;

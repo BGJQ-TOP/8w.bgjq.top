@@ -9,6 +9,9 @@
  *          绑定。请求体：
  *            { "type": "email",     "email": "a@b.com", "code": "123456", "password": "当前密码" }
  *            { "type": "fanverify", "uid": 10086,       "code": "654321", "password": "当前密码" }
+ *            { "type": "fanverify", "otp": "...",       "password": "当前密码" }   ← 扫码流程
+ *
+ *          扫码流程见 /passport/api/v1/fanverify-otp
  *
  *   DELETE /passport/api/v1/bindings
  *          解绑。密码放在**请求体**里，不放查询串：
@@ -68,12 +71,19 @@ function w8_bind(BindingService $bindings, Request $request, $account)
             $password
         );
     } elseif ($type === BindingService::TYPE_FANVERIFY) {
-        $updated = $bindings->bindFanVerify(
-            $account,
-            $request->int('uid', $request->int('fanverify_uid', 0)),
-            $code,
-            $password
-        );
+        // 两条路径：扫码（带 otp）或手填（带 uid + code）
+        $otp = $request->string('otp');
+
+        if ($otp !== '') {
+            $updated = $bindings->bindFanVerifyByOtp($account, $otp, $password);
+        } else {
+            $updated = $bindings->bindFanVerify(
+                $account,
+                $request->int('uid', $request->int('fanverify_uid', 0)),
+                $code,
+                $password
+            );
+        }
     } else {
         throw ApiException::validation('不支持的绑定类型，仅支持 email 或 fanverify', array('field' => 'type'));
     }

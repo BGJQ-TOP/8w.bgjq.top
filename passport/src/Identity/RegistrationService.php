@@ -162,6 +162,8 @@ final class RegistrationService
                 'email'                 => $emailBound ? $email : null,
                 'email_verified_at'     => $emailBound ? $now : null,
                 'fanverify_uid'         => $fanverifyIdentity !== null ? $fanverifyIdentity->uid() : null,
+                'fanverify_level'       => $fanverifyIdentity !== null ? $fanverifyIdentity->level() : null,
+                'fanverify_tag'         => $fanverifyIdentity !== null ? $fanverifyIdentity->tag() : null,
                 'fanverify_verified_at' => $fanverifyIdentity !== null ? $now : null,
 
                 // 必填绑定
@@ -275,8 +277,8 @@ final class RegistrationService
     /**
      * FanVerify 校验（可选绑定）
      *
-     * ⚠ TODO：FANVERIFY_API_URL 未配置时会抛 501 not_implemented。
-     * 注意这是**可选**绑定，所以未接入不会挡住注册 —— 只要用户不填就行。
+     * 代码已接入 fanverify.cn openAPI；只有 FANVERIFY_ACCESS_TOKEN 没配时才抛 501。
+     * 注意这是**可选**绑定，所以未配置不会挡住注册 —— 只要用户不填就行。
      *
      * @param int $fanverifyUid
      * @param string $fanverifyCode
@@ -293,12 +295,12 @@ final class RegistrationService
             throw ApiException::validation('请填写正确的 FanVerify 账号ID', array('field' => 'fanverify_uid'));
         }
         if ($fanverifyCode === '') {
-            throw ApiException::validation('请填写 FanVerify 验证码', array('field' => 'fanverify_code'));
+            throw ApiException::validation('请填写 FanVerify 动态验证码', array('field' => 'fanverify_code'));
         }
 
         if (!$this->verificationEnabled()) {
             $this->logger->warning('passport.verification_bypassed', array('step' => 'fanverify'));
-            return new FanVerifyIdentity($fanverifyUid, null);
+            return new FanVerifyIdentity($fanverifyUid, null, null);
         }
 
         return $this->fanVerify->verify($fanverifyUid, $fanverifyCode, $playerName);

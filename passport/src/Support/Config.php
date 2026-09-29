@@ -90,16 +90,16 @@ final class Config
         'EMAIL_CODE_TTL'           => '600',
         'EMAIL_FROM_NAME'          => '8W通行证',
 
-        // ---------- FanVerify 账号（可选绑定；TODO：接口待对接）----------
-        'FANVERIFY_API_URL'          => '',
-        'FANVERIFY_API_TOKEN'        => '',
-        'FANVERIFY_API_TIMEOUT'      => '8',
-        'FANVERIFY_API_METHOD'       => 'POST',
-        'FANVERIFY_API_SUCCESS_CODE' => '200',
-        'FANVERIFY_API_CODE_FIELD'   => '',
-        'FANVERIFY_API_MESSAGE_FIELD' => '',
-        'FANVERIFY_API_UID_FIELD'    => '',
-        'FANVERIFY_API_PLAYER_FIELD' => '',
+        // ---------- FanVerify 账号（可选绑定；已接入 fanverify.cn openAPI）----------
+        // 文档 https://doc.fanverify.cn/llms.txt；官方 OpenAPI 里 servers 为空，
+        // 默认值 https://api.fanverify.cn 是实测得出的（/openapi/* 返回文档描述的 401 结构）
+        'FANVERIFY_API_BASE'       => 'https://api.fanverify.cn',
+        'FANVERIFY_ACCESS_TOKEN'   => '',
+        'FANVERIFY_API_TIMEOUT'    => '10',
+        // 令牌要求的最低用户等级（0 = 不额外限制，交由 FanVerify 侧判断）
+        'FANVERIFY_REQUIRED_LEVEL' => '0',
+        // OTP 扫码流程的轮询上限（前端每 3 秒轮询一次，超过则视为超时）
+        'FANVERIFY_OTP_TTL'        => '180',
     );
 
     public function __construct($rootPath, array $values = array())

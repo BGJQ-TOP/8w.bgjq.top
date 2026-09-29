@@ -22,6 +22,7 @@
  */
 
 require_once __DIR__ . '/../../src/bootstrap.php';
+require_once __DIR__ . '/../_guard.php';
 
 use W8\Passport\Application;
 use W8\Passport\Http\ApiException;
@@ -34,7 +35,7 @@ Endpoint::run(function (Request $request, Application $app) {
     $account = $app->authenticator()->requireCurrent($request);
     $app->markApiContext(null, $account->id());
 
-    assertPassportAdmin($app, $account);
+    w8_require_admin($app, $account);
 
     $clients = $app->oauthClients();
 
@@ -164,22 +165,4 @@ function normalizeRedirectUris($raw)
     }
 
     return $uris;
-}
-
-/**
- * 管理员角色校验
- */
-function assertPassportAdmin(Application $app, $account)
-{
-    $allowed = array();
-    foreach (explode(',', $app->config()->getString('PASSPORT_ADMIN_ROLES', 'secretary_general')) as $role) {
-        $role = trim($role);
-        if ($role !== '') {
-            $allowed[] = $role;
-        }
-    }
-
-    if (!in_array($account->role(), $allowed, true)) {
-        throw ApiException::forbidden('只有管理员通行证可以管理第三方应用');
-    }
 }

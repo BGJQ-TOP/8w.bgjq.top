@@ -27,6 +27,7 @@ use W8\Passport\Support\Database;
 use W8\Passport\Support\HttpClient;
 use W8\Passport\Support\Logger;
 use W8\Passport\Verification\EmailCodeService;
+use W8\Passport\Verification\FanVerifyClient;
 use W8\Passport\Verification\HttpEmailVerifier;
 use W8\Passport\Verification\HttpFanVerifyVerifier;
 use W8\Passport\Verification\HttpSimpassVerifier;
@@ -227,6 +228,7 @@ final class Application
                 $this->accounts(),
                 $this->emailCodes(),
                 $this->fanVerifyVerifier(),
+                $this->config,
                 $this->logger()
             );
         });
@@ -310,11 +312,24 @@ final class Application
     public function fanVerifyVerifier()
     {
         if ($this->fanVerifyVerifier === null) {
-            $this->fanVerifyVerifier = $this->config->has('FANVERIFY_API_URL')
-                ? new HttpFanVerifyVerifier($this->config, $this->http(), $this->logger())
+            $this->fanVerifyVerifier = $this->config->has('FANVERIFY_ACCESS_TOKEN')
+                ? new HttpFanVerifyVerifier($this->config, $this->fanVerifyClient())
                 : new UnavailableFanVerifyVerifier();
         }
         return $this->fanVerifyVerifier;
+    }
+
+    /**
+     * FanVerify openAPI 客户端
+     *
+     * 除了"验证用户"，还覆盖 OTP 扫码流程、开发者自检、风险标签等能力，
+     * 这些不属于 Verifier 契约，单独暴露。
+     */
+    public function fanVerifyClient()
+    {
+        return $this->shared('fanverify_client', function () {
+            return new FanVerifyClient($this->config, $this->http(), $this->logger());
+        });
     }
 
     // ========================================================================

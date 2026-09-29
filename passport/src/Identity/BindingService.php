@@ -4,8 +4,11 @@ namespace W8\Passport\Identity;
 
 use W8\Passport\Contracts\FanVerifyVerifier;
 use W8\Passport\Http\ApiException;
+use W8\Passport\Support\Config;
 use W8\Passport\Support\Logger;
 use W8\Passport\Verification\EmailCodeService;
+use W8\Passport\Verification\FanVerifyClient;
+use W8\Passport\Verification\FanVerifyIdentity;
 
 /**
  * 绑定管理
@@ -38,6 +41,9 @@ final class BindingService
     /** @var FanVerifyVerifier */
     private $fanVerify;
 
+    /** @var Config */
+    private $config;
+
     /** @var Logger */
     private $logger;
 
@@ -45,11 +51,13 @@ final class BindingService
         AccountRepository $accounts,
         EmailCodeService $emailCodes,
         FanVerifyVerifier $fanVerify,
+        Config $config,
         Logger $logger
     ) {
         $this->accounts = $accounts;
         $this->emailCodes = $emailCodes;
         $this->fanVerify = $fanVerify;
+        $this->config = $config;
         $this->logger = $logger;
     }
 
@@ -95,7 +103,8 @@ final class BindingService
                 'bindable'  => true,
                 'available' => $this->fanVerify->isConfigured(),
                 'value'     => $account->fanverifyUid(),
-                'detail'    => $account->fanverifyVerifiedAt() !== null ? '已验证' : null,
+                'detail'    => $this->fanVerifyDetail($account),
+                'tag'       => $account->fanverifyTag(),
             ),
         );
     }
@@ -181,13 +190,11 @@ final class BindingService
     // ========================================================================
 
     /**
-     * 绑定 FanVerify 账号
-     *
-     * ⚠ TODO：FANVERIFY_API_URL 未配置时会抛 501 not_implemented。
+     * 绑定 FanVerify 账号（手填：账号ID + 动态验证码）
      *
      * @param Account $account
      * @param int $fanverifyUid
-     * @param string $code
+     * @param string $code FanVerify 小程序里的动态验证码
      * @param string $password
      * @return Account
      */
@@ -200,32 +207,122 @@ final class BindingService
             throw ApiException::validation('请填写正确的 FanVerify 账号ID', array('field' => 'fanverify_uid'));
         }
         if (trim((string) $code) === '') {
-            throw ApiException::validation('请填写 FanVerify 验证码', array('field' => 'fanverify_code'));
+            throw ApiException::validation('请填写 FanVerify 动态验证码', array('field' => 'fanverify_code'));
         }
 
-        if ($account->fanverifyUid() === $fanverifyUid) {
-            throw ApiException::conflict('该 FanVerify 账号已经绑定在当前通行证上', array('field' => 'fanverify_uid'));
-        }
+        $this->assertFanVerifyNotTaken($account, $fanverifyUid);
 
-        $owner = $this->accounts->findByFanverifyUid($fanverifyUid);
-        if ($owner !== null && $owner->id() !== $account->id()) {
-            throw ApiException::conflict('该 FanVerify 账号已被其它通行证绑定', array('field' => 'fanverify_uid'));
-        }
-
-        // 走外部验证；未接入时这里抛 501，不会写库
+        // 走外部验证；失败会抛 422/500/501，不会写库
         $identity = $this->fanVerify->verify($fanverifyUid, $code, $account->playerName());
+
+        return $this->attachFanVerify($account, $identity);
+    }
+
+    /**
+     * 绑定 FanVerify 账号（扫码：身份已由 OTP 流程拿到）
+     *
+     * 扫码流程里"这个人是谁"是 FanVerify 侧确认的（用户在小程序里点了同意），
+     * 我们只是把结果落库，因此这里只校验密码与唯一性。
+     *
+     * @param Account $account
+     * @param FanVerifyIdentity $identity
+     * @param string $password
+     * @return Account
+     */
+    public function bindFanVerifyWithIdentity(Account $account, FanVerifyIdentity $identity, $password)
+    {
+        $this->assertPassword($account, $password);
+
+        $this->assertFanVerifyNotTaken($account, $identity->uid());
+
+        return $this->attachFanVerify($account, $identity);
+    }
+
+    /**
+     * 绑定 FanVerify 账号（扫码：OTP 已被用户在小程序里确认）
+     *
+     * 扫码流程里"这个人是谁"是 FanVerify 侧确认的，我们只是把结果落库，
+     * 但**仍然要求当前密码**，并在落库前重新轮询一次 OTP
+     * —— 不轻信前端"已经确认了"的说法。
+     *
+     * @param Account $account
+     * @param string $otp
+     * @param string $password
+     * @return Account
+     */
+    public function bindFanVerifyByOtp(Account $account, $otp, $password)
+    {
+        $this->assertPassword($account, $password);
+
+        $otp = trim((string) $otp);
+        if ($otp === '') {
+            throw ApiException::validation('缺少 OTP，请重新扫码', array('field' => 'otp'));
+        }
+
+        $result = $this->fanVerify->pollOtp($otp);
+
+        if ($result['status'] !== FanVerifyClient::STATUS_OK || $result['identity'] === null) {
+            throw ApiException::validation(
+                '扫码尚未确认或已超时，请重新扫码',
+                array('field' => 'otp', 'status' => $result['status'])
+            );
+        }
+
+        $this->assertFanVerifyNotTaken($account, $result['identity']->uid());
+
+        return $this->attachFanVerify($account, $result['identity']);
+    }
+
+    /**
+     * 落库
+     *
+     * @return Account
+     */
+    private function attachFanVerify(Account $account, FanVerifyIdentity $identity)
+    {
+        $required = $this->requiredFanVerifyLevel();
+        if ($required > 0 && ($identity->level() === null || $identity->level() < $required)) {
+            throw ApiException::validation(
+                '该 FanVerify 账号等级不足（当前 '
+                . ($identity->level() === null ? '未知' : $identity->level())
+                . '，要求 ' . $required . '）',
+                array('field' => 'fanverify_uid')
+            );
+        }
 
         $this->accounts->update($account->id(), array(
             'fanverify_uid'         => $identity->uid(),
+            'fanverify_level'       => $identity->level(),
+            'fanverify_tag'         => $identity->tag(),
             'fanverify_verified_at' => date('Y-m-d H:i:s'),
         ));
 
         $this->logger->info('binding.fanverify_bound', array(
             'account_id' => $account->id(),
-            'replaced'   => $account->hasFanVerify(),
+            'fanverify_uid' => $identity->uid(),
+            'level' => $identity->level(),
+            'has_tag' => $identity->hasTag(),
+            'replaced' => $account->hasFanVerify(),
         ));
 
         return $this->reload($account);
+    }
+
+    /**
+     * 同一个 FanVerify 账号不能被两个通行证绑定
+     *
+     * @throws ApiException
+     */
+    private function assertFanVerifyNotTaken(Account $account, $fanverifyUid)
+    {
+        if ($account->fanverifyUid() === (int) $fanverifyUid) {
+            throw ApiException::conflict('该 FanVerify 账号已经绑定在当前通行证上', array('field' => 'fanverify_uid'));
+        }
+
+        $owner = $this->accounts->findByFanverifyUid((int) $fanverifyUid);
+        if ($owner !== null && $owner->id() !== $account->id()) {
+            throw ApiException::conflict('该 FanVerify 账号已被其它通行证绑定', array('field' => 'fanverify_uid'));
+        }
     }
 
     /**
@@ -245,6 +342,8 @@ final class BindingService
 
         $this->accounts->update($account->id(), array(
             'fanverify_uid'         => null,
+            'fanverify_level'       => null,
+            'fanverify_tag'         => null,
             'fanverify_verified_at' => null,
         ));
 
@@ -270,6 +369,37 @@ final class BindingService
             $this->logger->info('binding.password_mismatch', array('account_id' => $account->id()));
             throw ApiException::validation('当前密码不正确', array('field' => 'password'));
         }
+    }
+
+    /**
+     * FanVerify 绑定的补充说明（等级 / 风险标签）
+     *
+     * @return string|null
+     */
+    private function fanVerifyDetail(Account $account)
+    {
+        if (!$account->hasFanVerify()) {
+            return null;
+        }
+
+        $parts = array();
+
+        if ($account->fanverifyLevel() !== null) {
+            $parts[] = '等级 ' . $account->fanverifyLevel();
+        }
+        if ($account->fanverifyTag() !== null) {
+            $parts[] = '风险标签：' . $account->fanverifyTag();
+        }
+
+        return $parts === array() ? '已验证' : implode(' · ', $parts);
+    }
+
+    /**
+     * 本站在 FanVerify 等级上的额外门槛（0 = 不额外限制）
+     */
+    private function requiredFanVerifyLevel()
+    {
+        return max(0, $this->config->getInt('FANVERIFY_REQUIRED_LEVEL', 0));
     }
 
     /**

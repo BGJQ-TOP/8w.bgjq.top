@@ -47,3 +47,29 @@ if (!function_exists('w8_guard')) {
         throw ApiException::unauthorized('请先登录通行证，或携带有效的 Bearer 访问令牌');
     }
 }
+
+if (!function_exists('w8_require_admin')) {
+    /**
+     * 要求管理员通行证登录态
+     *
+     * 管理员角色由 .env 的 PASSPORT_ADMIN_ROLES 配置（逗号分隔，默认 secretary_general）。
+     *
+     * @param Application $app
+     * @param \W8\Passport\Identity\Account $account
+     * @throws ApiException
+     */
+    function w8_require_admin(Application $app, $account)
+    {
+        $allowed = array();
+        foreach (explode(',', $app->config()->getString('PASSPORT_ADMIN_ROLES', 'secretary_general')) as $role) {
+            $role = trim($role);
+            if ($role !== '') {
+                $allowed[] = $role;
+            }
+        }
+
+        if (!in_array($account->role(), $allowed, true)) {
+            throw ApiException::forbidden('只有管理员通行证可以执行该操作');
+        }
+    }
+}

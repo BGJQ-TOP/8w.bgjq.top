@@ -62,11 +62,11 @@ $isAdmin = $account !== null && in_array($account->role(), $adminRoles, true);
 
 // 接口接入状态（管理员可见）：判定依据是各数据源的 isConfigured()
 $interfaceStatus = array(
-    array('游戏内玩家', $app->playerProvider()->isConfigured(), 'PLAYER_API_BASE', true),
-    array('简幻通', $app->simpassVerifier()->isConfigured(), 'SIMPASS_API_URL', true),
-    array('邮箱验证码', $app->emailVerifier()->isConfigured(), 'EMAIL_API_URL', false),
-    array('FanVerify', $app->fanVerifyVerifier()->isConfigured(), 'FANVERIFY_API_URL', false),
-    array('邦国信息', $app->countryProvider()->isConfigured(), 'COUNTRY_API_BASE', false),
+    array('label' => '游戏内玩家', 'ok' => $app->playerProvider()->isConfigured(), 'env' => 'PLAYER_API_BASE', 'required' => true),
+    array('label' => '简幻通', 'ok' => $app->simpassVerifier()->isConfigured(), 'env' => 'SIMPASS_API_URL', 'required' => true),
+    array('label' => 'FanVerify', 'ok' => $app->fanVerifyVerifier()->isConfigured(), 'env' => 'FANVERIFY_ACCESS_TOKEN', 'required' => false, 'action' => 'fanverify-status'),
+    array('label' => '邮箱验证码', 'ok' => $app->emailVerifier()->isConfigured(), 'env' => 'EMAIL_API_URL', 'required' => false),
+    array('label' => '邦国信息', 'ok' => $app->countryProvider()->isConfigured(), 'env' => 'COUNTRY_API_BASE', 'required' => false),
 );
 
 $scopes = Scope::describe();
@@ -524,16 +524,21 @@ $scopes = Scope::describe();
                         </div>
                     </div>
                     <div class="w8-card__body">
+                        <div class="w8-alert w8-alert--info w8-mb-4" id="fv-status-box" hidden></div>
                         <table class="w8-kv">
 <?php foreach ($interfaceStatus as $row): ?>
                             <tr>
-                                <th><?php echo h($row[0]); ?><?php echo $row[3] ? '' : ' <span class="w8-badge w8-badge--off">可选</span>'; ?></th>
+                                <th><?php echo h($row['label']); ?><?php echo $row['required'] ? '' : ' <span class="w8-badge w8-badge--off">可选</span>'; ?></th>
                                 <td>
-<?php if ($row[1]): ?>
+<?php if ($row['ok']): ?>
                                     <span class="w8-badge w8-badge--ok"><span class="w8-dot"></span>已接入</span>
 <?php else: ?>
                                     <span class="w8-badge w8-badge--todo"><span class="w8-dot"></span>待接入</span>
-                                    <span class="w8-muted">配置 <code><?php echo h($row[2]); ?></code></span>
+                                    <span class="w8-muted">配置 <code><?php echo h($row['env']); ?></code></span>
+<?php endif; ?>
+<?php if (!empty($row['action']) && $row['ok']): ?>
+                                    <button type="button" class="w8-btn w8-btn--ghost w8-btn--sm"
+                                            id="btn-fanverify-status">自检</button>
 <?php endif; ?>
                                 </td>
                             </tr>
@@ -615,7 +620,8 @@ $scopes = Scope::describe();
 
     function showAlert(el, message, kind) {
         if (!el) { return; }
-        el.className = 'w8-alert w8-alert--' + (kind || 'error');
+        // 保留 w8-mb-4：showAlert 会整体重写 className，把外层给的间距一起带上
+        el.className = 'w8-alert w8-alert--' + (kind || 'error') + ' w8-mb-4';
         el.innerHTML = '<span class="w8-alert__icon" aria-hidden="true">!</span>'
             + '<div class="w8-alert__body">' + message + '</div>';
         el.hidden = false;
@@ -872,6 +878,11 @@ $scopes = Scope::describe();
             badge += ' <span class="w8-badge w8-badge--required">必填</span>';
         }
 
+        // FanVerify 风险标签：这是平台侧对该账号的公开标记，必须显眼
+        if (item.tag) {
+            badge += ' <span class="w8-badge w8-badge--todo">⚠ ' + esc(item.tag) + '</span>';
+        }
+
         var value = item.bound && item.value !== null && item.value !== ''
             ? '<div class="w8-binding__value">' + esc(item.value) + (item.detail ? ' · ' + esc(item.detail) : '') + '</div>'
             : (item.detail ? '<div class="w8-binding__value">' + esc(item.detail) + '</div>' : '');
@@ -941,22 +952,171 @@ $scopes = Scope::describe();
         }
 
         return '<div class="w8-card w8-mb-4"><div class="w8-card__body">'
-            + '<div class="w8-field">'
-            +   '<label class="w8-label" for="bind-fanverify-uid">FanVerify 账号ID</label>'
-            +   '<input class="w8-input" type="text" id="bind-fanverify-uid" inputmode="numeric" placeholder="FanVerify 账号ID">'
+            + '<div class="w8-tabs" style="margin-bottom:16px">'
+            +   '<button type="button" class="w8-tab w8-tab--active" data-fv-method="scan">扫码绑定</button>'
+            +   '<button type="button" class="w8-tab" data-fv-method="manual">手填绑定</button>'
             + '</div>'
-            + '<div class="w8-field">'
-            +   '<label class="w8-label" for="bind-fanverify-code">FanVerify 验证码</label>'
-            +   '<input class="w8-input" type="text" id="bind-fanverify-code" inputmode="numeric" maxlength="8" placeholder="在 FanVerify 内获取">'
+
+            // 扫码：申请 OTP → 出二维码 → 轮询 → 自动绑定
+            + '<div id="fv-panel-scan">'
+            +   '<p class="w8-muted w8-mb-4">用 <strong>FanVerify 微信小程序</strong>扫描二维码并确认，即可完成绑定。</p>'
+            +   '<div class="w8-alert w8-alert--error" id="fv-scan-error" role="alert" hidden></div>'
+            +   '<button type="button" class="w8-btn w8-btn--block" id="fv-scan-start">生成二维码</button>'
+            +   '<div class="w8-mt-4" id="fv-qr-box" hidden style="text-align:center">'
+            +     '<img id="fv-qr-img" alt="FanVerify 绑定二维码"'
+            +     ' style="width:100%;max-width:220px;height:auto;border:1px solid var(--w8-line);border-radius:12px;background:#fff;padding:8px">'
+            +     '<p class="w8-muted w8-mt-3" id="fv-scan-status">等待扫码…</p>'
+            +   '</div>'
             + '</div>'
+
+            // 手填：账号ID + 动态验证码
+            + '<div id="fv-panel-manual" hidden>'
+            +   '<div class="w8-field">'
+            +     '<label class="w8-label" for="bind-fanverify-uid">FanVerify 账号ID</label>'
+            +     '<input class="w8-input" type="text" id="bind-fanverify-uid" inputmode="numeric" placeholder="FanVerify 账号ID">'
+            +   '</div>'
+            +   '<div class="w8-field">'
+            +     '<label class="w8-label" for="bind-fanverify-code">动态验证码</label>'
+            +     '<input class="w8-input" type="text" id="bind-fanverify-code" inputmode="numeric" maxlength="8" placeholder="小程序里显示的动态验证码">'
+            +     '<span class="w8-hint">在 FanVerify 微信小程序里查看当前动态验证码。</span>'
+            +   '</div>'
+            + '</div>'
+
             + passwordField
             + '<div class="w8-cluster w8-cluster--end">'
             +   '<button type="button" class="w8-btn w8-btn--ghost w8-btn--sm" data-cancel="fanverify">取消</button>'
-            +   '<button type="button" class="w8-btn w8-btn--sm" data-confirm-bind="fanverify">确认绑定</button>'
+            +   '<button type="button" class="w8-btn w8-btn--sm" data-confirm-bind="fanverify" id="fv-confirm" hidden>确认绑定</button>'
             + '</div></div></div>';
     }
 
     var currentBindings = {};
+
+    /* ---------------- FanVerify 扫码流程 ---------------- */
+
+    var fvPollTimer = null;
+
+    function stopFanVerifyPolling() {
+        if (fvPollTimer) {
+            clearInterval(fvPollTimer);
+            fvPollTimer = null;
+        }
+    }
+
+    function resetFanVerifyScan() {
+        stopFanVerifyPolling();
+        var button = $('fv-scan-start');
+        if (button) { button.hidden = false; setLoading(button, false); }
+        var box = $('fv-qr-box');
+        if (box) { box.hidden = true; }
+    }
+
+    function wireFanVerifyForm() {
+        resetFanVerifyScan();
+        hide($('fv-scan-error'));
+
+        var tabs = document.querySelectorAll('[data-fv-method]');
+        var scanPanel = $('fv-panel-scan');
+        var manualPanel = $('fv-panel-manual');
+        var confirmButton = $('fv-confirm');
+
+        function selectMethod(method) {
+            Array.prototype.forEach.call(tabs, function (tab) {
+                tab.classList.toggle('w8-tab--active', tab.getAttribute('data-fv-method') === method);
+            });
+            if (scanPanel) { scanPanel.hidden = method !== 'scan'; }
+            if (manualPanel) { manualPanel.hidden = method !== 'manual'; }
+            // 扫码走自动绑定，不需要"确认绑定"按钮
+            if (confirmButton) { confirmButton.hidden = method !== 'manual'; }
+            if (method !== 'scan') { resetFanVerifyScan(); }
+        }
+
+        Array.prototype.forEach.call(tabs, function (tab) {
+            tab.addEventListener('click', function () { selectMethod(tab.getAttribute('data-fv-method')); });
+        });
+        selectMethod('scan');
+
+        var startButton = $('fv-scan-start');
+        if (!startButton) { return; }
+
+        startButton.addEventListener('click', function () {
+            var password = $('bind-fanverify-password').value;
+            if (!password) {
+                toast('请先填写当前密码', 'error');
+                return;
+            }
+
+            hide($('fv-scan-error'));
+            setLoading(startButton, true);
+
+            request('/fanverify-otp', { method: 'POST', body: { password: password } }).then(function (result) {
+                if (!result.ok) {
+                    setLoading(startButton, false);
+                    showAlert($('fv-scan-error'), errorText(result));
+                    return;
+                }
+
+                startButton.hidden = true;
+                var box = $('fv-qr-box');
+                box.hidden = false;
+                // 二维码是一次性的，加个时间戳避免浏览器复用缓存
+                $('fv-qr-img').src = result.data.qr_url + '&t=' + Date.now();
+                $('fv-scan-status').textContent = '等待扫码…';
+
+                startFanVerifyPolling(result.data.otp, result.data.expires_in || 180, password);
+            });
+        });
+    }
+
+    function startFanVerifyPolling(otp, ttlSeconds, password) {
+        stopFanVerifyPolling();
+
+        var deadline = Date.now() + ttlSeconds * 1000;
+        // FanVerify 侧对同一 OTP 有 5 秒最小查询间隔，这里 3 秒一次，
+        // 撞上限流就跳过本轮继续等
+        fvPollTimer = setInterval(function () {
+            if (Date.now() > deadline) {
+                resetFanVerifyScan();
+                $('fv-scan-status').textContent = '二维码已过期，请重新生成。';
+                return;
+            }
+
+            request('/fanverify-otp?otp=' + encodeURIComponent(otp)).then(function (result) {
+                if (!result.ok) {
+                    resetFanVerifyScan();
+                    showAlert($('fv-scan-error'), errorText(result));
+                    return;
+                }
+
+                var status = result.data.status;
+
+                if (status === 'rate_limit') {
+                    $('fv-scan-status').textContent = '查询过于频繁，稍后继续…';
+                    return;
+                }
+
+                if (status !== 'ok') {
+                    $('fv-scan-status').textContent = '等待扫码…';
+                    return;
+                }
+
+                stopFanVerifyPolling();
+                $('fv-scan-status').textContent = '已确认，正在绑定…';
+
+                request('/bindings', {
+                    method: 'POST',
+                    body: { type: 'fanverify', otp: otp, password: password }
+                }).then(function (bindResult) {
+                    if (!bindResult.ok) {
+                        showAlert($('fv-scan-error'), errorText(bindResult));
+                        resetFanVerifyScan();
+                        return;
+                    }
+                    toast('FanVerify 绑定成功', 'success');
+                    renderBindings(bindResult.data.bindings);
+                });
+            });
+        }, 3000);
+    }
 
     function renderBindings(bindings) {
         var box = $('bindings-list');
@@ -986,6 +1146,11 @@ $scopes = Scope::describe();
     }
 
     function wireBindingForm(key, bound) {
+        // FanVerify 有扫码 / 手填两条路径，单独接管
+        if (key === 'fanverify' && !bound) {
+            wireFanVerifyForm();
+        }
+
         var sendButton = $('bind-email-send');
         if (sendButton) {
             sendButton.addEventListener('click', function () {
@@ -1185,6 +1350,39 @@ $scopes = Scope::describe();
                 }
                 if (result.data.country) { renderCountry(result.data.country); }
                 toast('玩家数据已同步', 'success');
+            });
+        });
+    }
+
+    /* ---------------- 管理员：FanVerify 自检 ---------------- */
+    var fvStatusButton = $('btn-fanverify-status');
+    if (fvStatusButton) {
+        fvStatusButton.addEventListener('click', function () {
+            var box = $('fv-status-box');
+            setLoading(fvStatusButton, true);
+
+            request('/fanverify-status').then(function (result) {
+                setLoading(fvStatusButton, false);
+                if (!result.ok) {
+                    showAlert(box, errorText(result), 'error');
+                    return;
+                }
+
+                var data = result.data;
+                if (!data.ok) {
+                    showAlert(box, '<strong>FanVerify 不可用</strong><br>' + esc(data.error || '未知错误'), 'error');
+                    return;
+                }
+
+                var dev = data.developer || {};
+                showAlert(box,
+                    '<strong>FanVerify 连接正常</strong><br>'
+                    + '绑定账号 UID：' + esc(dev.bind_uid === null ? '—' : dev.bind_uid)
+                    + '　模式：' + esc(dev.mode || '—')
+                    + '　要求等级：' + esc(dev.need_end_level === null ? '—' : dev.need_end_level) + '<br>'
+                    + '签发时间：' + esc(dev.issued_at || '—')
+                    + (dev.service_message ? '<br>服务公告：' + esc(dev.service_message) : ''),
+                    'success');
             });
         });
     }

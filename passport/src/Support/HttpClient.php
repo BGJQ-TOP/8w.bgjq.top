@@ -5,10 +5,14 @@ namespace W8\Passport\Support;
 /**
  * 统一的出站 HTTP 客户端
  *
- * 所有对接第三方接口的地方（玩家信息、邦国信息、简幻通、邮件）都走这里，
+ * 所有对接第三方接口的地方（玩家信息、邦国信息、简幻通、邮件、FanVerify）都走这里，
  * 保证超时、重试、日志、错误语义一致。
+ *
+ * 刻意不加 final：测试里用子类覆写 get/postJson 返回预设响应，
+ * 就能在没有网络、没有 cURL 扩展的环境下验证第三方响应映射
+ * （见 passport/tests/smoke.php 的 FanVerifyClient 用例）。
  */
-final class HttpClient
+class HttpClient
 {
     /** @var Logger */
     private $logger;

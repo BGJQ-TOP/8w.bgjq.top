@@ -6,12 +6,12 @@ use W8\Passport\Contracts\FanVerifyVerifier;
 use W8\Passport\Http\ApiException;
 
 /**
- * FanVerify 验证 —— 未接入（Null Object）
+ * FanVerify 验证 —— 未配置（Null Object）
  *
- * ⚠ TODO：FanVerify 接口待对接。
- *   把接口地址填进 .env 的 FANVERIFY_API_URL，Application 会自动改用 HttpFanVerifyVerifier。
+ * 代码已完整接入 fanverify.cn openAPI，未配置只会出现在"没填令牌"的情况下。
+ * 把 FANVERIFY_ACCESS_TOKEN 填进 .env，Application 会自动改用 HttpFanVerifyVerifier。
  *
- * 注意：FanVerify 是可选绑定，未接入**不影响注册与登录**；
+ * 注意：FanVerify 是可选绑定，未配置**不影响注册与登录**；
  * 只有在用户主动发起 FanVerify 绑定时才会看到这个错误。
  */
 final class UnavailableFanVerifyVerifier implements FanVerifyVerifier
@@ -19,7 +19,7 @@ final class UnavailableFanVerifyVerifier implements FanVerifyVerifier
     /** @var string */
     private $reason;
 
-    public function __construct($reason = 'FanVerify 验证接口尚未接入')
+    public function __construct($reason = 'FanVerify 访问令牌未配置')
     {
         $this->reason = (string) $reason;
     }
@@ -36,8 +36,31 @@ final class UnavailableFanVerifyVerifier implements FanVerifyVerifier
 
     public function verify($fanverifyUid, $verifyCode, $playerName)
     {
-        throw ApiException::notImplemented(
-            $this->reason . '。请在 .env 中配置 FANVERIFY_API_URL / FANVERIFY_API_TOKEN（见 passport/README.md）'
+        throw $this->unavailable();
+    }
+
+    public function requestOtp()
+    {
+        throw $this->unavailable();
+    }
+
+    public function qrCodePng($otp)
+    {
+        throw $this->unavailable();
+    }
+
+    public function pollOtp($otp)
+    {
+        throw $this->unavailable();
+    }
+
+    /**
+     * @return ApiException
+     */
+    private function unavailable()
+    {
+        return ApiException::notImplemented(
+            $this->reason . '。请在 .env 中填写 FANVERIFY_ACCESS_TOKEN（见 passport/README.md）'
         );
     }
 }

@@ -75,8 +75,10 @@ CREATE TABLE IF NOT EXISTS `passport_accounts` (
     `simpass_level`       TINYINT UNSIGNED NULL                   COMMENT '简幻通等级',
     `simpass_verified_at` DATETIME        NULL                    COMMENT '简幻通验证通过时间',
 
-    -- 可选绑定：FanVerify 账号（TODO：接口待对接）
+    -- 可选绑定：FanVerify 账号（fanverify.cn 微信小程序 2FA）
     `fanverify_uid`         BIGINT UNSIGNED NULL                  COMMENT 'FanVerify 账号ID（可选绑定；NULL = 未绑定）',
+    `fanverify_level`       TINYINT UNSIGNED NULL                 COMMENT 'FanVerify 等级（权威缓存）',
+    `fanverify_tag`         VARCHAR(64)     NULL                  COMMENT 'FanVerify 风险标签（权威缓存；空串表示无标签）',
     `fanverify_verified_at` DATETIME        NULL                  COMMENT 'FanVerify 验证通过时间',
 
     -- 必填绑定：游戏内玩家身份（权威第三方提供；玩家名为权威主键，其余为缓存）
