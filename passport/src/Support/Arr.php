@@ -13,14 +13,14 @@ namespace W8\Passport\Support;
 final class Arr
 {
     /**
-     * @param array<string,mixed> $source
+     * @param mixed $source 非数组时直接返回默认值（第三方返回 HTML 错误页是常态）
      * @param string $path
      * @param mixed $default
      * @return mixed
      */
-    public static function get(array $source, $path, $default = null)
+    public static function get($source, $path, $default = null)
     {
-        if ($path === '' || $path === null) {
+        if ($path === '' || $path === null || !is_array($source)) {
             return $default;
         }
 
@@ -49,10 +49,10 @@ final class Arr
     /**
      * 取一个列表，无论源是 list 还是 map
      *
-     * @param array<string,mixed> $source
+     * @param mixed $source
      * @return array<int,mixed>
      */
-    public static function getList(array $source, $path)
+    public static function getList($source, $path)
     {
         $value = self::get($source, $path, array());
         if (!is_array($value)) {
@@ -68,12 +68,12 @@ final class Arr
     /**
      * 按顺序取第一个存在的路径，用于兼容第三方字段改名
      *
-     * @param array<string,mixed> $source
+     * @param mixed $source
      * @param array<int,string> $paths
      * @param mixed $default
      * @return mixed
      */
-    public static function first(array $source, array $paths, $default = null)
+    public static function first($source, array $paths, $default = null)
     {
         foreach ($paths as $path) {
             $value = self::get($source, $path, null);

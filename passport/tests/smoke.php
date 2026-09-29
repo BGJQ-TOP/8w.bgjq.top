@@ -150,6 +150,13 @@ checkSame('toIntOrNull 非数字 -> null', null, Arr::toIntOrNull('abc'));
 checkSame('toIntOrNull 数字串 -> int', 42, Arr::toIntOrNull('42'));
 checkSame('toTextOrNull 空白 -> null', null, Arr::toTextOrNull('   '));
 
+// 第三方返回 HTML 错误页是常态，取值工具必须能扛住非数组输入
+checkSame('get 对 null 返回默认值', 'x', Arr::get(null, 'a.b', 'x'));
+checkSame('get 对字符串返回默认值', 'x', Arr::get('404 page not found', 'error', 'x'));
+checkSame('getList 对 null 返回空数组', array(), Arr::getList(null, 'data'));
+checkSame('first 对 null 返回默认值', null, Arr::first(null, array('a', 'b')));
+checkSame('get 对 null 且无默认值时返回 null', null, Arr::get(null, 'error'));
+
 // ----------------------------------------------------------------------------
 
 section('OAuth\\Scope —— 授权范围');
@@ -829,11 +836,19 @@ checkThrows('user_verify 返回非 ok 状态 -> 422', function () use ($fvClient
     $fvClient->verifyUser(100002, '000000');
 }, 'invalid_request');
 
-// ---- 401 ----
+// ---- 401 / 404 的语义必须能区分开 ----
+// 实测 FanVerify 先校验路径再鉴权：不存在的路径返回 404，所以 401 一定指向令牌问题
 $fvHttp->on('/openapi/devinfo', 401, '{"error":"Unauthorized"}');
 checkThrows('401 -> 500 且提示令牌问题', function () use ($fvClient) {
     $fvClient->developerInfo();
 }, 'server_error');
+
+$fvHttp->on('/openapi/devinfo', 404, '404 page not found');
+checkThrows('404 -> 500（路径/根地址配错，与令牌无关）', function () use ($fvClient) {
+    $fvClient->developerInfo();
+}, 'server_error');
+
+$fvHttp->on('/openapi/devinfo', 200, '{"status":"ok"}');
 
 // ---- OTP 申请 ----
 $fvHttp->on('/openapi/otp', 200, '{"success":true,"data":{"otp":"0pO6gTXmtlzwOBNc"}}');

@@ -308,6 +308,7 @@ final class FanVerifyClient
         $this->assertTransport($response, 'tag');
 
         $payload = $response->json();
+        $payload = is_array($payload) ? $payload : array();
         $code = Arr::toIntOrNull(Arr::get($payload, 'code'));
 
         if ($response->ok() && $code === 200) {
@@ -404,7 +405,10 @@ final class FanVerifyClient
     private function httpError($response, $endpoint)
     {
         $status = $response->status();
+        // 非 2xx 的响应体未必是 JSON —— CDN/WAF 出错时返回 HTML 错误页是常态
         $payload = $response->json();
+        $payload = is_array($payload) ? $payload : array();
+
         $message = Arr::toTextOrNull(Arr::get($payload, 'message'));
         $error = Arr::toTextOrNull(Arr::get($payload, 'error'));
 
@@ -413,11 +417,24 @@ final class FanVerifyClient
         ));
 
         if ($status === 401) {
-            // 文档里 401 恒为 {"error":"Unauthorized"}：令牌无效、未启用或来源 IP 未在白名单内
+            // 文档里 401 恒为 {"error":"Unauthorized"}。
+            // 实测：FanVerify 先校验路径再鉴权 —— 不存在的路径返回 404，
+            // 所以拿到 401 说明**路径是对的**，问题一定在令牌侧：
+            // 无效、未启用、已过期，或来源 IP 不在白名单内。
             return ApiException::serverError(
                 'FanVerify 拒绝了本次调用（401 未授权）。'
                 . '请检查 FANVERIFY_ACCESS_TOKEN 是否有效、是否已在 FanVerify 开发者后台启用，'
                 . '以及本服务器出口 IP 是否在令牌白名单内。'
+            );
+        }
+
+        if ($status === 404) {
+            // 路径写错了属于我们的问题，和令牌无关，要能一眼区分开
+            $this->logger->error('fanverify.endpoint_not_found', array('endpoint' => $endpoint));
+
+            return ApiException::serverError(
+                'FanVerify 接口路径不存在（404）：' . $endpoint
+                . '。这通常意味着 FANVERIFY_API_BASE 配错了，或 FanVerify 改了接口路径。'
             );
         }
 
