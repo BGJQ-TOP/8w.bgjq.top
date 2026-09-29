@@ -119,7 +119,8 @@ SELECT * FROM users LIMIT 1;                   -- 视图可查
 然后打开站点：
 
 - `https://<域名>/passport/` → 用首个管理员通行证登录；
-- 登录后管理员可见「接口接入状态」卡片，逐项确认五个外部接口的接入状态；
+- 登录后管理员可见「接口接入状态」卡片，逐项确认五个接口的接入状态
+  （其中 **FanVerify 已接入**，卡片上显示"已接入"只取决于 `FANVERIFY_ACCESS_TOKEN` 有没有填）；
 - 抽查主站页面（首页、世界动态、社区大会、法庭、公共服务）与 `/api/v1/users.php`（管理员）是否正常。
 
 **第 5 步：确认无误后再清理旧库**
@@ -173,18 +174,26 @@ mysql -u root -p < 8w_passport.rendered.sql
 mysql -u root -p bgjq8w < database/upgrade-email-optional-fanverify.sql
 ```
 
-它做四件事，每一步都先用 `information_schema` 判断当前状态，**已完成的步骤自动跳过，可重复执行**：
+它做四件事（其中第 2 步另含一个针对"中间版本"补列的 2b），每一步都先用 `information_schema`
+判断当前状态，**已完成的步骤自动跳过，可重复执行**：
 
 | 步骤 | 内容 |
 | --- | --- |
 | 1 | `passport_accounts.email` 由 `NOT NULL` 改为允许 `NULL`（改为"可选绑定"） |
-| 2 | 新增 `fanverify_uid`（`BIGINT UNSIGNED NULL`）与 `fanverify_verified_at`（`DATETIME NULL`） |
+| 2 | 新增 `fanverify_uid`（`BIGINT UNSIGNED NULL`）、`fanverify_level`（`TINYINT UNSIGNED NULL`）、`fanverify_tag`（`VARCHAR(64) NULL`）与 `fanverify_verified_at`（`DATETIME NULL`）四列 |
+| 2b | 只加过 `fanverify_uid` 的中间版本，单独补 `fanverify_level` / `fanverify_tag` 两列（同样先查 `information_schema` 再 `ALTER`） |
 | 3 | 新增唯一索引 `uk_fanverify_uid` |
 | 4 | 确认唯一索引 `uk_email` 存在（可选绑定同样要唯一，只是允许多个 `NULL`） |
 
+`fanverify_level` 与 `fanverify_tag` 是 FanVerify 侧返回的**权威缓存**：等级（接口里是字符串，代码转成 `int`）、
+风险标签（空串表示无标签，落库为 `NULL`）。它们随绑定一起写入，解绑时一并清空；
+存量账号这两列是 `NULL`，表示"未绑定或尚无数据"，不需要回填。
+
 脚本末尾会自检并打印 `email` / `email_verified_at` / `simpass_uid` / `fanverify_uid` / `fanverify_verified_at`
 五个字段的当前状态与三个唯一索引（`uk_email`、`uk_simpass_uid`、`uk_fanverify_uid`）。
-预期结果：`email` 允许 `NULL`，两个 FanVerify 字段已存在，三个唯一索引齐全。
+预期结果：`email` 允许 `NULL`，FanVerify 各字段已存在，三个唯一索引齐全。
+（注意：自检的输出语句仍只列了这五个字段与三个索引，**没有把 `fanverify_level` / `fanverify_tag` 也打出来**，
+但升级语句确实包含这两列 —— 想单独确认可以自己 `SHOW COLUMNS FROM passport_accounts LIKE 'fanverify%';`。）
 
 - 已有数据不会被动：升级只是 `ALTER TABLE`，不重建库、不重建账号、不动任何一行数据。
   存量账号的 `fanverify_uid` 为 `NULL`，即"未绑定"，符合可选绑定语义，无需补数据。
@@ -439,11 +448,13 @@ mysql -u root -p bgjq8w < database/upgrade-email-optional-fanverify.sql
 - [ ] `PASSPORT_ADMIN_ROLES` 已按实际管理员角色配置（默认 `secretary_general`）
 - [ ] `PASSPORT_COOKIE_DOMAIN` 按需配置（留空表示当前域），站点已启用 HTTPS（Cookie 的 `Secure` 由请求协议自动判定）
 
-### 外部接口（五个 TODO 项）
+### 外部接口（四个 TODO 项 + 已接入的 FanVerify）
 
 其中与**必填绑定**相关的三个（游戏内玩家、简幻通、邦国）不接入会直接挡住注册或查询；
 与**可选绑定**相关的两个（邮箱验证码、FanVerify）不接入只影响"绑定"这一步，
 **不影响注册与登录**——用户不勾选对应的可选绑定即可。
+注意这两个的"未接入"含义不同：邮箱是**接口还没接**；FanVerify **代码已完整接入**，
+只差 `.env` 里的令牌没配（或配了但上游返回 401，见下）。
 
 - [ ] 游戏内玩家：`PLAYER_API_BASE` / `PLAYER_API_PATH`（+ 字段路径）已配置，状态显示已接入
       （**注册必填校验**，未接入时注册会明确 501）
@@ -453,7 +464,11 @@ mysql -u root -p bgjq8w < database/upgrade-email-optional-fanverify.sql
       必须同时配置 `COUNTRY_API_PATH_BY_NAME`，否则按名称查询会明确报 501
 - [ ] 邮箱验证码（**可选绑定**）：`.env` 的 `EMAIL_API_URL`（+ `EMAIL_API_TOKEN` / `EMAIL_API_BODY_TEMPLATE` 等）
       已配置，且 `/passport/` 的「接口接入状态」显示**已接入**
-- [ ] FanVerify（**可选绑定**）：`.env` 的 `FANVERIFY_API_URL`（+ `FANVERIFY_API_TOKEN` / 字段路径）已配置
+- [ ] FanVerify（**可选绑定，已接入**）：`.env` 的 `FANVERIFY_ACCESS_TOKEN` 已配置
+      （可选：`FANVERIFY_API_BASE` / `FANVERIFY_API_TIMEOUT` / `FANVERIFY_REQUIRED_LEVEL` / `FANVERIFY_OTP_TTL`），
+      且 `php bin/fanverify-check.php` 全绿 —— 它会检查 cURL 扩展、配置、`/openapi/devinfo` 连通性、
+      令牌信息与 OTP 可用性。**若 `devinfo` 返回 401**，问题在令牌侧：令牌未在 FanVerify 开发者后台启用、
+      已过期，或 FanVerify 侧配了来源 IP 白名单；自检脚本会打印 `curl -i` 的自查命令
 - [ ] 已知悉：接口未接入时，对应功能会返回 **HTTP 501 `not_implemented`** 并给出明确原因，
       **不会静默放行**；注册链路的校验顺序为
       字段格式 → 唯一性 → 玩家名 → 简幻通 → 邮箱验证码（可选）→ FanVerify（可选）→ 落库
@@ -464,6 +479,9 @@ mysql -u root -p bgjq8w < database/upgrade-email-optional-fanverify.sql
 - [ ] 完整走一遍**必填项**注册：玩家名 → 简幻通 → 自动登录，且邦国信息自动带出
 - [ ] 再走一遍**带可选绑定**的注册（勾选验证邮箱与 FanVerify），确认两项都正确落库
 - [ ] 在 `/passport/` 的「绑定管理」里绑一次邮箱、解一次邮箱，确认每次都要输入当前密码
+- [ ] 在「绑定管理 → FanVerify → 绑定」里两条路径都试一遍：**扫码绑定**（申请 OTP → 展示二维码 →
+      小程序确认 → 自动落库）与**手填**（FanVerify 账号ID + 动态验证码）；
+      确认落库后绑定项显示等级与风险标签（若有），且解绑同样要求当前密码
 - [ ] 修改密码后，其它设备上的登录态被踢下线
 - [ ] 创建测试第三方应用，跑通授权码流程（`/oauth/authorize` → `/oauth/token` → `/oauth/userinfo`）
 - [ ] `client_credentials` 令牌可查 `/passport/api/v1/player` 与 `/passport/api/v1/country`，

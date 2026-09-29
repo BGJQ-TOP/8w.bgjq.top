@@ -16,7 +16,7 @@
 7. [用户信息 GET /oauth/userinfo](#七用户信息-get-oauthuserinfo)
 8. [令牌内省 POST /oauth/introspect](#八令牌内省-post-oauthintrospect)
 9. [令牌吊销 POST /oauth/revoke](#九令牌吊销-post-oauthrevoke)
-10. [数据查询接口](#十数据查询接口)（含 [10.3 绑定管理](#103-绑定管理-passportapiv1bindings)）
+10. [数据查询接口](#十数据查询接口)（含 [10.3 绑定管理](#103-绑定管理-passportapiv1bindings)、[10.4 FanVerify 扫码绑定的两个端点](#104-fanverify-扫码绑定的两个端点)、[10.5 FanVerify 接入自检](#105-fanverify-接入自检管理员)）
 11. [错误码表](#十一错误码表)
 12. [限流](#十二限流)
 13. [可直接运行的示例](#十三可直接运行的示例)
@@ -60,6 +60,9 @@ https://8w.bgjq.top
 | POST | `/passport/api/v1/email-code` | 下发邮箱验证码 |
 | GET | `/passport/api/v1/me` | 当前通行证 + 绑定全景（需通行证会话 Cookie，非第三方接口） |
 | GET / POST / DELETE | `/passport/api/v1/bindings` | 绑定管理：列出 / 绑定 / 解绑（需通行证会话 Cookie） |
+| POST / GET | `/passport/api/v1/fanverify-otp` | FanVerify 扫码绑定：申请 OTP / 轮询是否已被确认（需通行证会话 Cookie） |
+| GET | `/passport/api/v1/fanverify-qr` | FanVerify OTP 二维码 PNG（服务端代理，需通行证会话 Cookie） |
+| GET | `/passport/api/v1/fanverify-status` | FanVerify 接入自检（**需管理员**通行证会话 Cookie） |
 | GET / DELETE | `/passport/api/v1/authorized-apps` | 列出 / 撤销授权（需通行证会话 Cookie） |
 | GET / POST / DELETE | `/passport/api/oauth/clients` | 第三方应用管理（需管理员通行证会话 Cookie） |
 
@@ -125,14 +128,14 @@ Access-Control-Max-Age: 86400
 
 scope 由 `passport/src/OAuth/Scope.php` 的 `MAP` 常量唯一定义，逐条如下：
 
-| scope | 含义（源码原文） |
+| scope | 含义（取自 `passport/src/OAuth/Scope.php` 的 `MAP`，`fanverify` 一行已按实际返回结构更正） |
 | --- | --- |
 | `basic` | 通行证UID、用户名、站内角色 |
 | `email` | 验证邮箱与邮箱验证状态（未绑定时不返回该字段） |
 | `player` | 游戏内玩家名、玩家ID、所属邦国ID |
 | `country` | 所属邦国ID（与 player 重复，供只关心邦国的应用使用） |
 | `simpass` | 简幻通ID与等级 |
-| `fanverify` | FanVerify 账号ID（未绑定时不返回该字段） |
+| `fanverify` | FanVerify 账号信息 `{uid, level, tag}`（未绑定时不返回该字段） |
 | `offline_access` | 刷新令牌到期后仍可继续换取新的刷新令牌（不申请则只能刷新一次） |
 | `directory` | 查询游戏内玩家与邦国公开信息（机器对机器） |
 
@@ -148,6 +151,9 @@ scope 由 `passport/src/OAuth/Scope.php` 的 `MAP` 常量唯一定义，逐条�
 - ⚠ **`email` 与 `fanverify` 对应的是可选绑定**：用户完全可以不绑，此时对应字段在 userinfo 里
   **整块省略**（不是返回 `null`）。申请了这两个 scope 不等于一定能拿到值，客户端必须按
   "字段存在即已绑定、字段缺失即未绑定" 来判断。
+- ⚠ `Scope::MAP` 里 `fanverify` 这一行的文案仍是「FanVerify 账号ID（未绑定时不返回该字段）」，
+  **没跟着实际返回结构同步**；真实返回的是 `{uid, level, tag}` 三字段（见第七节），以
+  `Account::toProfileArray()` 为准。
 
 ---
 
@@ -359,7 +365,9 @@ Authorization: Bearer <access_token>
       "level": 3
     },
     "fanverify": {
-      "uid": 555
+      "uid": 555,
+      "level": 3,
+      "tag": null
     }
   }
 }
@@ -379,6 +387,8 @@ Authorization: Bearer <access_token>
 | `simpass.uid` | `simpass` | int \| null | 简幻通 ID |
 | `simpass.level` | `simpass` | int \| null | 简幻通等级 |
 | `fanverify.uid` | `fanverify` | int | FanVerify 账号ID。**未绑定时整个 `fanverify` 块省略** |
+| `fanverify.level` | `fanverify` | int \| null | FanVerify 等级（FanVerify 接口里是字符串，通行证统一转成 `int`；权威缓存，可能为 `null`） |
+| `fanverify.tag` | `fanverify` | string \| null | FanVerify 风险标签（平台侧对该账号的公开标记）。**没有标签时为 `null`**（FanVerify 返回空串即视为无标签） |
 
 > ⚠ **「未绑定」的表示方式是"字段不存在"，而不是"字段为 `null`"。**
 > `email` / `email_verified` 与整个 `fanverify` 块都遵循这条规则：
@@ -386,7 +396,8 @@ Authorization: Bearer <access_token>
 > （"该用户没有绑定"），不用去猜 `null` 到底是"没绑"还是"接口没返回"。
 >
 > 与之相对，`player.player_id` / `player.country_id` / `simpass.*` 是**必填绑定**或权威缓存，
-> 键始终存在，值可能为 `null`。
+> 键始终存在，值可能为 `null`。`fanverify` 块存在时同理：`uid` / `level` / `tag` 三个键都在，
+> `level` 与 `tag` 可能是 `null`（分别是"FanVerify 没返回等级"与"该账号没有风险标签"）。
 
 `offline_access` 与 `directory` 不改变 userinfo 的输出内容。
 
@@ -602,7 +613,7 @@ Authorization: Bearer <access_token>
 | 必填 | 游戏内玩家名 | `false` | 权威身份主键，注册时经权威接口实时校验 |
 | 必填 | 简幻通ID | `false` | 注册时校验通过，同时是默认的账号找回通道 |
 | 可选 | 验证邮箱 | `true` | 用户自己决定绑不绑，随时可绑可解 |
-| 可选 | FanVerify 账号 | `true` | 同上 |
+| 可选 | FanVerify 账号 | `true` | 同上；有**扫码**与**手填**两条绑定路径（见下方「绑定」） |
 
 #### 列出全部绑定
 
@@ -618,7 +629,7 @@ GET /passport/api/v1/bindings
       "player":    { "label": "游戏内玩家名", "bound": true,  "required": true,  "bindable": false, "value": "LouieMAIN", "detail": "玩家ID 1001" },
       "simpass":   { "label": "简幻通",       "bound": true,  "required": true,  "bindable": false, "value": 10086,      "detail": "等级 3" },
       "email":     { "label": "验证邮箱",     "bound": false, "required": false, "bindable": true,  "available": true,  "value": null, "detail": null },
-      "fanverify": { "label": "FanVerify",    "bound": false, "required": false, "bindable": true,  "available": false, "value": null, "detail": null }
+      "fanverify": { "label": "FanVerify",    "bound": true,  "required": false, "bindable": true,  "available": true,  "value": 555, "detail": "等级 3 · 风险标签：疑似小号", "tag": "疑似小号" }
     },
     "account": { "...": "见 GET /passport/api/v1/me" }
   }
@@ -627,9 +638,14 @@ GET /passport/api/v1/bindings
 
 - `bound` —— 是否已绑定；
 - `required` —— 是否必填（必填项 `bindable` 恒为 `false`）；
-- `available` —— **仅两个可选绑定有**，表示对应的外部接口是否已接入。为 `false` 时前端应禁用绑定按钮
-  并说明原因（如「接口待接入」），而不是让用户白点一次。判定依据分别是
-  `EmailCodeService::isDeliverable()`（即 `EMAIL_API_URL`）与 `FanVerifyVerifier::isConfigured()`（即 `FANVERIFY_API_URL`）。
+- `available` —— **仅两个可选绑定有**，表示对应的外部接口是否可用。为 `false` 时前端应禁用绑定按钮
+  并说明原因，而不是让用户白点一次。判定依据分别是
+  `EmailCodeService::isDeliverable()`（即 `EMAIL_API_URL` 是否配置）与
+  `FanVerifyVerifier::isConfigured()`（即 `FANVERIFY_ACCESS_TOKEN` 是否配置 ——
+  FanVerify 已真实接入，`false` 只表示"没填令牌"，不代表接口待开发）；
+- `tag` —— **仅 `fanverify` 有**，FanVerify 风险标签（`string | null`，无标签为 `null`）。
+  它是平台侧对该账号的**公开标记**，前端应在绑定项旁显眼展示；
+  等级则拼进 `detail`（形如 `等级 3 · 风险标签：疑似小号`），等级与标签都为空时 `detail` 回落到「已验证」。
 
 `GET /passport/api/v1/me` 也会返回同一份 `bindings`。
 
@@ -639,11 +655,24 @@ GET /passport/api/v1/bindings
 POST /passport/api/v1/bindings
 Content-Type: application/json
 
+# 绑定邮箱
 { "type": "email",     "email": "you@example.com", "code": "123456", "password": "当前密码" }
+
+# 绑定 FanVerify —— 路径一：手填（账号ID + 动态验证码）
 { "type": "fanverify", "uid": 10086,               "code": "654321", "password": "当前密码" }
+
+# 绑定 FanVerify —— 路径二：扫码（otp 来自 /passport/api/v1/fanverify-otp）
+{ "type": "fanverify", "otp": "0pO6gTXmtlzwOBNc",  "password": "当前密码" }
 ```
 
-绑定邮箱前需先调用 `POST /passport/api/v1/email-code` 并传 `scene: "bind"` 获取验证码。
+- 绑定邮箱前需先调用 `POST /passport/api/v1/email-code` 并传 `scene: "bind"` 获取验证码。
+- FanVerify 的两条路径由 `otp` 是否存在自动区分：**带了 `otp` 走扫码，否则走手填**（此时 `uid` 必填）。
+  手填路径由服务端调 FanVerify 的 `user_verify` 接口校验 UID + 动态验证码；
+  扫码路径则由服务端**重新轮询一次 OTP**（不轻信前端"用户已确认"的说法），
+  未通过或已超时 → 422「扫码尚未确认或已超时，请重新扫码」（`details.status` 给出 `wait` / `rate_limit`）。
+- FanVerify 落库时会一并写入 `fanverify_uid` / `fanverify_level` / `fanverify_tag` / `fanverify_verified_at`
+  （未绑定时都是 `NULL`）。若本站在 `.env` 里配了 `FANVERIFY_REQUIRED_LEVEL`（默认 `0` = 不限），
+  等级不足的账号会被拒绝：422「该 FanVerify 账号等级不足（当前 X，要求 N）」，`details.field = fanverify_uid`。
 
 成功返回：
 
@@ -691,7 +720,216 @@ Content-Type: application/json
 | 该邮箱 / FanVerify 已被其它通行证绑定 | 409 | `conflict` |
 | 重复绑定同一个值 | 409 | `conflict` |
 | 解绑一个本来就没绑定的项 | 409 | `conflict` |
-| 对应外部接口未接入（邮箱或 FanVerify） | 501 | `not_implemented` |
+| 对应外部接口不可用（邮箱接口未接入，或 FanVerify 的令牌未配置） | 501 | `not_implemented` |
+| FanVerify 扫码未确认 / 已超时 / 等级不足门槛 | 422 | `invalid_request` |
+| FanVerify 上游 401（令牌无效、未启用或 IP 未放行） | 500 | `server_error`（文案带排查提示） |
+
+---
+
+### 10.4 FanVerify 扫码绑定的两个端点
+
+> ⚠ 同样是**第一方接口**：鉴权走通行证会话 Cookie（`Authenticator::requireCurrent()`），
+> 不接受 Bearer 令牌。第三方应用用不到它们。
+
+FanVerify 的扫码绑定由两个端点配合完成，**令牌（`accesstoken`）永远不出现在浏览器侧**：
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| `POST` | `/passport/api/v1/fanverify-otp` | 申请一个 OTP（第一步） |
+| `GET` | `/passport/api/v1/fanverify-otp?otp=…` | 轮询该 OTP 是否已被用户在小程序里确认 |
+| `GET` | `/passport/api/v1/fanverify-qr?otp=…` | 取该 OTP 的二维码 PNG（服务端代理） |
+
+**这三个端点背后的 FanVerify 上游接口**（根地址 `https://api.fanverify.cn`，
+官方文档 <https://doc.fanverify.cn/llms.txt>，便于与官方文档对照排查）：
+
+| 我们的端点 | FanVerify 上游 | 说明 |
+| --- | --- | --- |
+| `POST …/fanverify-otp` | `GET /openapi/otp` | 返回 `{"success":true,"data":{"otp":"…"}}` |
+| `GET …/fanverify-qr` | `GET /openapi/genqrcode` | 返回 `image/png`；令牌只留在服务端 |
+| `GET …/fanverify-otp` | `GET /openapi/seeotp` | 返回 `{"status":"wait"}` 或 `{"status":"ok","data":[…]}`；同一 OTP **5 秒内重复查询返回 429 `{"status":"rate_limit"}`**，所以前端轮询间隔定在 3 秒，撞上限流就跳过本轮 |
+| `POST /passport/api/v1/bindings`（`otp` 路径） | 再调一次 `GET /openapi/seeotp` | 落库前复核，不轻信前端"已确认" |
+| `POST /passport/api/v1/bindings`（`uid`+`code` 路径） | `GET /openapi/user_verify` | 参数 `uid` + `pass_code` |
+| `GET …/fanverify-status` | `GET /openapi/devinfo` | 管理员自检 |
+
+#### ① 申请 OTP
+
+```http
+POST /passport/api/v1/fanverify-otp
+Content-Type: application/json
+
+{ "password": "当前密码" }
+```
+
+| 参数 | 必填 | 说明 |
+| --- | --- | --- |
+| `password` | 是 | 当前通行证密码。**服务端先校验密码再申请 OTP** —— 免得用户扫完码才发现密码错了 |
+
+成功返回：
+
+```json
+{
+  "ok": true,
+  "data": {
+    "otp": "0pO6gTXmtlzwOBNc",
+    "qr_url": "/passport/api/v1/fanverify-qr?otp=0pO6gTXmtlzwOBNc",
+    "expires_in": 180,
+    "poll_interval": 3
+  }
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `otp` | FanVerify 签发的 OTP，后续轮询与绑定都要带上它 |
+| `qr_url` | 二维码地址（**站内相对路径**，直接用 `<img src>` 即可，不要自己拼 FanVerify 的地址） |
+| `expires_in` | OTP 有效期（秒），取自 `FANVERIFY_OTP_TTL`（默认 180，代码下限 30），前端据此判定超时 |
+| `poll_interval` | 建议的轮询间隔（秒），固定为 `3` |
+
+响应带 `Cache-Control: no-store`。
+
+失败情形：未登录 → 401 `unauthorized`；`password` 缺失或错误 → 422 `invalid_request`
+（「当前密码不正确」，`details.field = password`）；`FANVERIFY_ACCESS_TOKEN` 未配置 → 501 `not_implemented`；
+FanVerify 未签发 OTP 或返回空 OTP → 500 `server_error`；上游 401（令牌问题）→ 500 `server_error`；
+上游 403 → 403 `forbidden`。
+
+#### ② 轮询 OTP
+
+```http
+GET /passport/api/v1/fanverify-otp?otp=0pO6gTXmtlzwOBNc
+```
+
+成功返回（HTTP 200，**注意 `rate_limit` 也是 200**，它不是错误，只是"问得太勤了"）：
+
+```json
+{ "ok": true, "data": { "status": "wait", "verified": false } }
+```
+
+| `data.status` | 含义 | 客户端该做什么 |
+| --- | --- | --- |
+| `wait` | 用户还没在小程序里确认 | 继续轮询 |
+| `ok` | 用户已确认 | 停止轮询，接着调 `POST /passport/api/v1/bindings`（见 10.3） |
+| `rate_limit` | 距上次查询不足 5 秒（FanVerify 侧的限流） | 跳过本轮，等下一次再查 |
+
+`data.verified` 等价于 `status === "ok"`。本端点**只回"是否通过"，不回身份信息** ——
+落库统一走 `/bindings`，避免出现"OTP 通过了但没人绑"的中间态被误用。
+
+失败情形：未登录 → 401；缺少 `otp` 参数 → 422 `invalid_request`「缺少参数 otp」；
+令牌未配置 → 501；上游 401（令牌问题）→ 500 `server_error`；上游 403 → 403 `forbidden`。
+（注意：上游对同一 OTP 的 429 限流**不会**变成 429 响应，而是被映射成 `status: "rate_limit"` 的 200。）
+
+#### ③ 取二维码 PNG
+
+```http
+GET /passport/api/v1/fanverify-qr?otp=0pO6gTXmtlzwOBNc
+```
+
+成功时返回**图片本体**：`Content-Type: image/png`、`Content-Length` 正确，
+并带 `Cache-Control: no-store, no-cache, must-revalidate` 与 `Pragma: no-cache`（二维码对应一次性 OTP，绝不能被缓存）。
+
+**为什么要服务端代理**：FanVerify 的 `GET /openapi/genqrcode` 要求把 `accesstoken` 放在 **query string** 上。
+若让浏览器直接请求上游，令牌就会出现在前端 URL、浏览器历史与 `Referer` 里；
+因此由服务端带上令牌取回 PNG 再原样转发。该端点也要求登录态，避免被当成公开的二维码代取服务。
+
+失败时返回的是 **JSON**（不是图片），格式与其他接口一致：
+
+```json
+{ "ok": false, "error": { "code": "invalid_request", "message": "otp 格式不正确" } }
+```
+
+| 情形 | 状态码 | 错误码 |
+| --- | --- | --- |
+| 未登录 | 401 | `unauthorized` |
+| 缺少 `otp` | 422 | `invalid_request`「缺少参数 otp」 |
+| `otp` 超过 64 字符或含白名单外字符（只允许 `A-Za-z0-9_-`） | 422 | `invalid_request`「otp 格式不正确」 |
+| `FANVERIFY_ACCESS_TOKEN` 未配置 | 501 | `not_implemented` |
+| 上游返回的不是 PNG（例如一段 HTML 错误页） | 500 | `server_error`「FanVerify 返回的二维码不是 PNG 图片」 |
+| 上游 401（令牌问题） | 500 | `server_error`（带令牌排查提示） |
+| 上游 403 / 429 | 403 `forbidden` / 429 `rate_limited` | 原样透传上游语义 |
+| 其它未预期异常 | 500 | `server_error`「二维码获取失败」 |
+
+#### 完整流程（前端视角）
+
+1. 用户点「FanVerify → 绑定 → 扫码绑定」，填当前密码；
+2. `POST /passport/api/v1/fanverify-otp {password}` → 拿到 `otp` / `qr_url` / `expires_in` / `poll_interval`；
+3. 把 `qr_url` 作为 `<img src>` 展示（走服务端代理）；
+4. 用户用 **FanVerify 微信小程序**扫码并确认；
+5. 每 3 秒 `GET /passport/api/v1/fanverify-otp?otp=…` 轮询，直到 `status` 为 `ok`
+   （`rate_limit` 跳过本轮，超过 `expires_in` 提示二维码过期并重新生成）；
+6. `POST /passport/api/v1/bindings {type:"fanverify", otp, password}` ——
+   **服务端会再轮询一次 OTP**，通过后才落库。
+
+---
+
+### 10.5 FanVerify 接入自检（管理员）
+
+```http
+GET /passport/api/v1/fanverify-status
+```
+
+> ⚠ 第一方接口：鉴权走通行证会话 Cookie，且**必须是管理员**
+> （角色在 `PASSPORT_ADMIN_ROLES` 里，默认 `secretary_general`），
+> 非管理员 → 403 `forbidden`「只有管理员通行证可以执行该操作」。
+
+存在的意义：令牌不可用时，用户侧只会看到一句"FanVerify 拒绝了本次调用（401 未授权）"。
+这个端点让管理员在后台点一下「接口接入状态 → FanVerify → 自检」就能看到
+"是没配令牌、还是令牌被拒、还是网络不通"，不用登服务器翻日志
+（服务器上更完整的排查仍用 `php bin/fanverify-check.php`）。
+
+**令牌已配置且 `devinfo` 调用成功**（HTTP 200）：
+
+```json
+{
+  "ok": true,
+  "data": {
+    "configured": true,
+    "ok": true,
+    "error": null,
+    "base_url": "https://api.fanverify.cn",
+    "developer": {
+      "issued_at": "2026-07-12T15:54:56+08:00",
+      "bind_uid": 100000,
+      "mode": "HTTP",
+      "need_end_level": 1,
+      "service_message": "…",
+      "status": "ok"
+    },
+    "level_warning": false
+  }
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `configured` | `FANVERIFY_ACCESS_TOKEN` 是否已配置 |
+| `ok` | 本次自检是否成功（**注意它和 HTTP 状态码是两回事**，见下） |
+| `error` | 失败原因文案，成功时为 `null` |
+| `base_url` | 实际使用的接口根地址（配错 `FANVERIFY_API_BASE` 时一眼可见） |
+| `developer` | `devinfo` 的返回（`issued_at` / `bind_uid` / `mode` / `need_end_level` / `service_message` / `status`），失败时为 `null` |
+| `level_warning` | 本站 `FANVERIFY_REQUIRED_LEVEL` 低于 FanVerify 要求的 `need_end_level` 时为 `true`（提醒本站门槛会被上游先拦下） |
+
+**自检失败时依然返回 HTTP 200，只是 `data.ok` 为 `false`** —— 自检失败不是服务器错误，
+而是"这个外部接口现在不可用"，前端据此显示一条错误提示即可：
+
+```json
+{
+  "ok": true,
+  "data": {
+    "configured": true,
+    "ok": false,
+    "error": "FanVerify 拒绝了本次调用（401 未授权）。请检查 FANVERIFY_ACCESS_TOKEN 是否有效…",
+    "base_url": "https://api.fanverify.cn",
+    "developer": null
+  }
+}
+```
+
+令牌根本没配时同理：`{"configured": false, "ok": false, "error": "FANVERIFY_ACCESS_TOKEN 未配置", "developer": null}`。
+
+响应一律带 `Cache-Control: no-store`。真正的失败只有鉴权：未登录 → 401 `unauthorized`；非管理员 → 403 `forbidden`。
+
+> ⚠ 源码里这个文件的头部注释把返回字段写成了 `{configured, ok, token_hint, developer, error}`，
+> 其中 **`token_hint` 实际并未返回**（实现返回的是 `base_url` 与 `level_warning`）——
+> 以本节与 `passport/api/v1/fanverify-status.php` 的代码为准，该注释是陈旧的。
 
 ---
 
@@ -701,14 +939,31 @@ Content-Type: application/json
 
 | `error.code` | HTTP | 触发场景 |
 | --- | --- | --- |
-| `invalid_request` | 422 | 参数校验失败；`error.details.field` 指出出错字段（用户名/邮箱/密码/玩家名/验证码/缺少 name 等） |
+| `invalid_request` | 422 | 参数校验失败；`error.details.field` 指出出错字段（用户名/邮箱/密码/玩家名/验证码/缺少 name 等）；FanVerify 扫码未确认或已超时、FanVerify 账号等级不足门槛也归此类 |
 | `unauthorized` | 401 | 未登录；缺少或无效的 Bearer 令牌；令牌对应的通行证已不可用 |
-| `forbidden` | 403 | 权限不足，例如令牌没有 `directory` scope |
+| `forbidden` | 403 | 权限不足，例如令牌没有 `directory` scope；FanVerify 侧返回 403（权限或额度不足，或该用户未被本开发者验证过）时原样透传 |
 | `not_found` | 404 | 玩家或邦国不存在 |
-| `conflict` | 409 | 用户名 / 邮箱 / 游戏内玩家名 / 简幻通 ID 已被占用 |
-| `rate_limited` | 429 | 应用调用频率超限（**不含令牌端点**，`POST /oauth/token` 见 11.2 的 `temporarily_unavailable`）；邮箱验证码发送过于频繁 |
-| `not_implemented` | 501 | 对应外部接口尚未接入（邮箱验证码 / 游戏内玩家 / 邦国 / 简幻通） |
+| `conflict` | 409 | 用户名 / 邮箱 / 游戏内玩家名 / 简幻通 ID / FanVerify 账号ID 已被占用 |
+| `rate_limited` | 429 | 应用调用频率超限（**不含令牌端点**，`POST /oauth/token` 见 11.2 的 `temporarily_unavailable`）；邮箱验证码发送过于频繁；FanVerify 侧返回 429 时原样透传 |
+| `not_implemented` | 501 | 对应外部接口尚未接入（邮箱验证码 / 游戏内玩家 / 邦国 / 简幻通）；或 **FanVerify 的 `FANVERIFY_ACCESS_TOKEN` 未配置**（FanVerify 本身已接入，这不是"接口待开发"） |
 | `server_error` | 500 | 服务器内部错误；外部权威接口异常或返回无法解析的数据 |
+
+> **FanVerify 的错误映射**（源码 `FanVerifyClient::httpError()` / `assertTransport()`，只影响用户主动发起
+> FanVerify 绑定时的响应）：
+>
+> | 上游情况 | 我们返回 |
+> | --- | --- |
+> | `401 {"error":"Unauthorized"}` | **500 `server_error`**，文案带排查提示：检查令牌是否有效、是否已在 FanVerify 开发者后台启用、本服务器出口 IP 是否在令牌白名单内 |
+> | 404 | **500 `server_error`**「FanVerify 接口路径不存在（404）：<端点>。这通常意味着 `FANVERIFY_API_BASE` 配错了，或 FanVerify 改了接口路径」—— 与 401 刻意区分开：FanVerify **先校验路径再鉴权**，所以 401 说明路径是对的、问题在令牌侧，404 才是我们的路径问题 |
+> | 403 | 403 `forbidden`（带上游的 `message`，没有就用默认文案） |
+> | 429 | 429 `rate_limited`「FanVerify 请求过于频繁，请稍后重试」 |
+> | 连不上 / 超时 / DNS 失败 / cURL 扩展缺失 | 500 `server_error`「FanVerify 服务暂时不可用（具体原因）」 |
+> | 200 但 JSON 无法解析、或 `data` 里没有有效 `uid` | 500 `server_error` |
+> | `user_verify` 的 `status` 不是 `ok`（UID 或动态验证码不对） | 422 `invalid_request`「FanVerify 验证失败：账号ID或动态验证码不正确」（`details.field = fanverify_code`） |
+> | `getuserdata` 的 403（该用户没被本开发者验证过） | 在客户端内部映射为 `null`，不抛错 |
+>
+> 排错入口有两个：后台「接口接入状态」卡片上 FanVerify 那一行的「自检」按钮（`GET /passport/api/v1/fanverify-status`，见 10.5），
+> 以及服务器上的 `php bin/fanverify-check.php`（见 `passport/README.md` 7.5）。
 
 ### 11.2 OAuth 2.0 错误（RFC 6749 §5.2 格式 `{"error":"…","error_description":"…"}`）
 

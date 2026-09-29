@@ -92,12 +92,27 @@ SIMPASS_API_URL=
 
 # 可选绑定接口：不接入也能注册与登录，只是对应绑定功能不可用
 EMAIL_API_URL=
-FANVERIFY_API_URL=
+
+# FanVerify 账号（可选绑定；已接入 fanverify.cn openAPI，填令牌即启用）
+FANVERIFY_API_BASE=https://api.fanverify.cn
+FANVERIFY_ACCESS_TOKEN=******
+FANVERIFY_API_TIMEOUT=10
+# 本站额外要求的 FanVerify 等级，0 = 不额外限制
+FANVERIFY_REQUIRED_LEVEL=0
+# 扫码绑定的 OTP 有效期（秒）
+FANVERIFY_OTP_TTL=180
 ```
 
-> `EMAIL_API_URL` 与 `FANVERIFY_API_URL` 是**可选绑定**（验证邮箱 / FanVerify 账号）对应的接口，
+> `EMAIL_API_URL` 与 `FANVERIFY_ACCESS_TOKEN` 是**可选绑定**（验证邮箱 / FanVerify 账号）对应的接口配置，
 > 未配置时不影响注册与登录；`PLAYER_API_BASE` / `COUNTRY_API_BASE` / `SIMPASS_API_URL`
 > 则关系到注册必填校验，未配置时注册会明确返回 501。
+> FanVerify **已完整接入**（7 个 openAPI 接口：`devinfo` / `otp` / `genqrcode` / `seeotp` /
+> `user_verify` / `getuserdata` / `tag`），"未配置"只意味着没填 `FANVERIFY_ACCESS_TOKEN`。
+> 配好后可以跑一次接入自检（会检查 cURL 扩展、配置、`/openapi/devinfo` 连通性、令牌信息与 OTP 可用性）：
+
+```bash
+php bin/fanverify-check.php
+```
 
 `php/config.php` 只负责社区站点自身的数据库连接，通过 `env()` 读取上述变量，
 不再硬编码任何凭据。
@@ -189,7 +204,7 @@ sudo yum install php php-mysqlnd php-curl php-json php-mbstring
 | 扩展 | 用途 |
 |---|---|
 | `pdo_mysql` | 数据库访问（通行证与社区站点共用） |
-| `curl` | 调用游戏内玩家 / 邦国 / 简幻通 / 邮箱验证码 / FanVerify 五个外部接口 |
+| `curl` | 调用游戏内玩家 / 邦国 / 简幻通 / 邮箱验证码 / FanVerify 五个外部接口（其中 **FanVerify 已接入**；缺这个扩展时 `php bin/fanverify-check.php` 会第一步就报错） |
 | `openssl` | 生成密码学安全随机数（会话令牌、OAuth 令牌、验证码） |
 | `mbstring` | 中文与多字节字符串处理 |
 

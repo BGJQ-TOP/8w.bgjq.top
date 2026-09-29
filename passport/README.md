@@ -20,7 +20,7 @@
 | 身份是全局资产 | 主站、第三方应用、将来的其他子站都引用同一份 `passport_accounts.id`，不能再散落在 `users` 表里 |
 | 第三方接入需要标准协议 | OAuth 2.0 授权码 + PKCE / 刷新令牌 / 客户端凭据，由 `src/OAuth/` 独立承载（RFC 6749 / 7636 / 7009 / 7662） |
 | 权威数据来自游戏服务器 | 玩家名与邦国 ID 的权威方是第三方游戏服务，本地只做缓存，缓存策略必须集中一处（`src/Directory/`） |
-| 外部接口还没全部到位 | 玩家、邦国、简幻通、邮箱、FanVerify 五个接口都可能没接入，必须做到「未接入就明确报错，绝不静默放行」；其中邮箱与 FanVerify 是**可选绑定**，未接入不会挡住注册 |
+| 外部接口还没全部到位 | 玩家、邦国、简幻通、邮箱四个接口都可能没接入，必须做到「未接入就明确报错，绝不静默放行」；其中邮箱是**可选绑定**，未接入不会挡住注册。FanVerify 已真实接入（见 7.5），未配令牌时同样明确报 501 |
 | 便于测试 | 无 Composer / 无框架，纯 PSR-4 自动加载，`passport/tests/smoke.php` 不依赖数据库与网络即可跑 |
 
 ### 与社区主站的关系
@@ -54,7 +54,9 @@ passport/
 │   │   ├── player.php            GET    查游戏内玩家（权威 + 缓存）
 │   │   ├── country.php           GET    查邦国（按 ID 或名称）
 │   │   ├── authorized-apps.php   GET/DELETE  列出/撤销第三方授权
-│   │   └── bindings.php          GET/POST/DELETE  绑定管理（列出 / 绑定 / 解绑可选绑定，详见第五节）
+│   │   ├── bindings.php          GET/POST/DELETE  绑定管理（列出 / 绑定 / 解绑可选绑定，详见第五节）
+│   │   ├── fanverify-otp.php     POST/GET  FanVerify 扫码绑定：申请 OTP / 轮询是否已被确认
+│   │   └── fanverify-qr.php      GET       FanVerify OTP 二维码（服务端代理 PNG，令牌不进前端 URL）
 │   └── oauth/                    OAuth 2.0 端点
 │       ├── authorize.php         GET/POST 授权端点（含授权确认页与错误页）
 │       ├── token.php             POST     令牌端点（三种 grant_type）
@@ -80,7 +82,7 @@ passport/
 │   │   ├── Response.php          统一响应格式与 OAuth2 错误格式
 │   │   ├── ApiException.php      业务异常 + OAuth2 错误载体
 │   │   └── Endpoint.php          端点运行器（CORS、OPTIONS、异常翻译、访问日志）
-│   ├── Contracts/                五个外部接口契约（接口到位后只需实现它们）
+│   ├── Contracts/                五个外部接口契约（玩家 / 邦国 / 邮箱 / 简幻通 / FanVerify；换实现只需实现它们）
 │   │   ├── PlayerProvider.php    游戏内玩家数据源
 │   │   ├── CountryProvider.php   邦国数据源
 │   │   ├── EmailVerifier.php     邮箱验证码发送方（可选绑定）
@@ -97,8 +99,10 @@ passport/
 │   │   ├── HttpEmailVerifier.php 邮件发送 HTTP 实现（配置驱动）
 │   │   ├── HttpSimpassVerifier.php 简幻通校验 HTTP 实现（配置驱动）
 │   │   ├── SimpassIdentity.php   简幻通校验结果值对象
-│   │   ├── HttpFanVerifyVerifier.php FanVerify 校验 HTTP 实现（配置驱动）
-│   │   ├── FanVerifyIdentity.php FanVerify 校验结果值对象
+│   │   ├── FanVerifyClient.php   FanVerify openAPI 客户端（devinfo / otp / genqrcode / seeotp /
+│   │   │                         user_verify / getuserdata / tag 共 7 个接口）
+│   │   ├── HttpFanVerifyVerifier.php FanVerify 验证实现（委托给 FanVerifyClient）
+│   │   ├── FanVerifyIdentity.php FanVerify 校验结果值对象（uid / level / tag / regTime）
 │   │   └── Unavailable*.php      未接入时的 Null Object（一律抛 not_implemented）
 │   ├── Identity/                 身份域
 │   │   ├── Account.php           账号只读视图（toPublicArray / toProfileArray；email() 未绑定时返回 null）
@@ -115,7 +119,7 @@ passport/
 │       └── AuthorizationCodeRepository.php 授权码仓库（一次性消费）
 ├── tests/smoke.php               最小验证脚本（不依赖数据库与网络）
 ├── storage/logs/                 运行期日志（.gitignore 排除，Nginx 已 deny）
-└── （项目根的 bin/ 下有 init-database.ps1、test.ps1、maintenance.php 三个脚本）
+└── （项目根的 bin/ 下有 init-database.ps1、test.ps1、maintenance.php、fanverify-check.php 四个脚本）
 ```
 
 ---
@@ -175,8 +179,8 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
 | ③ | **游戏内玩家名权威校验（必填）**：`PlayerDirectory::find($playerName, true)` 强制回源 | 玩家不存在 → 422「游戏内不存在名为「X」的玩家」；权威返回名与输入大小写不敏感不一致 → 422「玩家名应为「Y」，请核对后重试」 |
 | ④ | **简幻通校验（必填）**：`SimpassVerifier::verify($simpassUid, $simpassCode, $playerName)` | 业务码不为成功码 → 422「简幻通验证失败：…」（`details.field = simpass_code`）；接口未接入 → 501 |
 | ⑤ | **邮箱验证码校验（可选）**：没填邮箱就整段跳过；填了邮箱则 `EmailCodeService::assertVerify($email, 'register', $emailCode)`，成功即消费 | 填了邮箱却没填验证码 → 422「填写了邮箱就必须填写邮箱验证码」（`details.field = email_code`）；验证码错误/过期 → 422；发送接口未接入 → 501 |
-| ⑥ | **FanVerify 校验（可选）**：账号ID与验证码都没填就整段跳过；只填了其中一个 → 422；都填了才 `FanVerifyVerifier::verify($fanverifyUid, $fanverifyCode, $playerName)` | 只填一半 → 422「请填写正确的 FanVerify 账号ID」/「请填写 FanVerify 验证码」；校验失败 → 422（`details.field = fanverify_code`）；接口未接入 → 501 |
-| ⑦ | **落库**（`Database::transaction`）：写入 `username` / `password_hash`（`password_hash(…, PASSWORD_DEFAULT)`）/ `email` / `email_verified_at` / `simpass_uid` / `simpass_level` / `simpass_verified_at` / `fanverify_uid` / `fanverify_verified_at` / `player_name` / `player_id` / `country_id` / `player_synced_at` / `role='observer'` / `status=1`。**可选绑定未绑定时落 `NULL`，绝不写空串** | 写库失败 → 500 `server_error` |
+| ⑥ | **FanVerify 校验（可选，已接入）**：账号ID与验证码都没填就整段跳过；只填了其中一个 → 422；都填了才 `FanVerifyVerifier::verify($fanverifyUid, $fanverifyCode, $playerName)`（即 `GET /openapi/user_verify`） | 只填一半 → 422「请填写正确的 FanVerify 账号ID」/「请填写 FanVerify 动态验证码」；校验失败 → 422（`details.field = fanverify_code`）；**没配 `FANVERIFY_ACCESS_TOKEN`** → 501 |
+| ⑦ | **落库**（`Database::transaction`）：写入 `username` / `password_hash`（`password_hash(…, PASSWORD_DEFAULT)`）/ `email` / `email_verified_at` / `simpass_uid` / `simpass_level` / `simpass_verified_at` / `fanverify_uid` / `fanverify_level` / `fanverify_tag` / `fanverify_verified_at` / `player_name` / `player_id` / `country_id` / `player_synced_at` / `role='observer'` / `status=1`。**可选绑定未绑定时落 `NULL`，绝不写空串** | 写库失败 → 500 `server_error` |
 | ⑧ | **邦国缓存预热**：`$player->hasCountry()` 时 `CountryDirectory::find($countryId, true)`；回源失败则 `CountryDirectory::touch($countryId, null)` 落一行占位（名称「邦国#ID」） | **尽力而为**：预热失败只记日志（`passport.country_warmup_skipped` / `passport.country_touch_failed`），不影响注册结果 |
 | ⑨ | **注册即登录**：`SessionStore::create()` 下发 HttpOnly Cookie，`AccountRepository::touchLogin()` 记录登录时间与 IP | — |
 | ⑩ | 记 `passport.registered` 日志，重新读取账号并返回 `data.account` | 读回失败 → 500「注册成功但读取账号失败，请尝试登录」 |
@@ -189,16 +193,19 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
 
 这是本轮最容易被写错的一处，务必按代码理解：
 
-| 用户输入 | `email` | `email_verified_at` | `fanverify_uid` | `fanverify_verified_at` |
-| --- | --- | --- | --- | --- |
-| 什么都没填 | `NULL` | `NULL` | `NULL` | `NULL` |
-| 只填了邮箱 + 验证码 | 邮箱 | 注册时刻 | `NULL` | `NULL` |
-| 只填了 FanVerify | `NULL` | `NULL` | 账号ID | 注册时刻 |
-| 两样都填 | 邮箱 | 注册时刻 | 账号ID | 注册时刻 |
+| 用户输入 | `email` | `email_verified_at` | `fanverify_uid` | `fanverify_level` | `fanverify_tag` | `fanverify_verified_at` |
+| --- | --- | --- | --- | --- | --- | --- |
+| 什么都没填 | `NULL` | `NULL` | `NULL` | `NULL` | `NULL` | `NULL` |
+| 只填了邮箱 + 验证码 | 邮箱 | 注册时刻 | `NULL` | `NULL` | `NULL` | `NULL` |
+| 只填了 FanVerify | `NULL` | `NULL` | 账号ID | FanVerify 返回的等级 | 风险标签（无标签则 `NULL`） | 注册时刻 |
+| 两样都填 | 邮箱 | 注册时刻 | 账号ID | FanVerify 返回的等级 | 风险标签（无标签则 `NULL`） | 注册时刻 |
 
 - **落 `NULL` 而不是空串**：`uk_email` / `uk_fanverify_uid` 是唯一索引，MySQL/MariaDB 的唯一索引允许
   多个 `NULL`，但空串会互相冲突——第二个不填邮箱的账号就注册不了了。
 - **填了邮箱则验证码必填**：否则等于绑了一个"未经证明属于自己"的邮箱，找回流程会被它带偏。
+- **`fanverify_level` / `fanverify_tag` 是 FanVerify 侧返回的权威缓存**：`level` 在接口里是**字符串**（如 `"3"`），
+  代码里统一转成 `int`；`tag` 为空串即"没有标签"，`FanVerifyIdentity::tag()` 与 `Account::fanverifyTag()`
+  都会把它归一成 `null`，因此落库也是 `NULL` 而不是空串。
 - `Account::email()` 的返回类型是 `?string`，未绑定时为 `null`；配套的 `Account::hasEmail()` 用于判断"有没有绑"。
 - `AccountRepository::findByEmail('')` 直接返回 `null`（不去查 `WHERE email = ''`）；
   `findByLogin()` 的 SQL 是 `username = ? OR (email IS NOT NULL AND email = ?)`，未绑定的账号只按用户名匹配。
@@ -226,6 +233,8 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
 此时跳过 ④（简幻通）、⑤（邮箱验证码）与 ⑥（FanVerify），并每次记 `passport.verification_bypassed` 的
 **WARNING** 日志（日志里带 `step` 字段，取值为 `simpass` / `email` / `fanverify`）。
 步骤 ③（玩家名权威校验）**永不跳过**。生产环境两个开关都必须保持 `0`。
+跳过的 FanVerify 只会落 `fanverify_uid`，`fanverify_level` / `fanverify_tag` 都是 `NULL`
+（`new FanVerifyIdentity($fanverifyUid, null, null)`，本地联调时不会去 FanVerify 取等级）。
 
 ---
 
@@ -238,7 +247,7 @@ index.php   ┴─→ Http\Endpoint ─→ Application（唯一容器）
 | 必填 | 游戏内玩家名 | ✗ | 权威身份主键，注册时经权威接口实时校验 |
 | 必填 | 简幻通ID | ✗ | 注册时校验通过，同时是默认的账号找回通道 |
 | 可选 | 验证邮箱 | ✓ | 用户自己决定绑不绑，随时可绑可解 |
-| 可选 | FanVerify 账号 | ✓ | 同上；接口未接入时 `available` 为 `false`，前端禁用绑定按钮（见 7.5） |
+| 可选 | FanVerify 账号 | ✓ | 同上；有**扫码**与**手填**两条绑定路径（见 5.3）；未配令牌时 `available` 为 `false`，前端禁用绑定按钮（见 7.5） |
 
 服务实现 `src/Identity/BindingService.php`（`Application::bindings()` 可取），
 HTTP 端点 `passport/api/v1/bindings.php`。必填绑定不在这里管理，也无法解绑。
@@ -261,13 +270,17 @@ HTTP 端点 `passport/api/v1/bindings.php`。必填绑定不在这里管理，�
 | 方法 | 用途 | 关键参数 |
 | --- | --- | --- |
 | `GET /passport/api/v1/bindings` | 列出全部绑定状态 | 无 |
-| `POST /passport/api/v1/bindings` | 绑定 | `type=email`：`email` + `code` + `password`；`type=fanverify`：`uid` + `code` + `password` |
+| `POST /passport/api/v1/bindings` | 绑定 | `type=email`：`email` + `code` + `password`；`type=fanverify` **手填**：`uid` + `code` + `password`；`type=fanverify` **扫码**：`otp` + `password`（见 5.3） |
 | `DELETE /passport/api/v1/bindings` | 解绑 | `type`（query 或 body）+ `password`（**仅 body**） |
 
 - `bindings` 的每一项结构是 `{label, bound, required, bindable, value, detail}`；
   两个可选绑定（`email` / `fanverify`）额外带一个 `available` 字段，表示**该绑定对应的外部接口是否已接入**
   （判定依据分别是 `EmailCodeService::isDeliverable()` 与 `FanVerifyVerifier::isConfigured()`）。
   前端据此直接禁用按钮并说明原因，而不是让用户白点一次。
+- `fanverify` 这一项还额外带 `tag` 字段（`Account::fanverifyTag()`，无标签为 `null`）。
+  风险标签是平台侧对该 FanVerify 账号的**公开标记**，前端会在绑定项名称旁用醒目的角标展示
+  （`passport/index.php` 的 `bindingRow()` 里判断 `item.tag`）；等级则拼进 `detail`，形如 `等级 3 · 风险标签：疑似小号`，
+  两者都为空时 `detail` 回落到「已验证」。
 - `POST` / `DELETE` 成功后返回最新的 `bindings` 与 `account`（`POST` 多一个 `bound`、`DELETE` 多一个 `unbound`），
   前端不用再补一次 `GET`。
 - `GET /passport/api/v1/me` 也会带上同一份 `bindings`。
@@ -276,9 +289,49 @@ HTTP 端点 `passport/api/v1/bindings.php`。必填绑定不在这里管理，�
 > ⚠ `password` 一律走**请求体**，不接受查询串 —— 放进 URL 会被 Web 服务器访问日志、
 > 浏览器历史与 `Referer` 记录下来。`type` 无敏感性，允许放查询串。
 
-字段级细节（完整返回结构、全部错误码）见 [`docs/PASSPORT-API.md`](../docs/PASSPORT-API.md) 第 10.3 节。
+字段级细节（完整返回结构、全部错误码）见 [`docs/PASSPORT-API.md`](../docs/PASSPORT-API.md) 第 10.3 节，
+FanVerify 扫码流程的两个端点见同文件第 10.4 节。
 
-### 5.3 邮箱验证码的场景（scene）
+### 5.3 FanVerify 的两条绑定路径
+
+FanVerify（fanverify.cn）是**可选绑定**，已真实接入它的 openAPI（细节见 7.5）。
+绑定有两条路，最终都落到 `BindingService::attachFanVerify()`：
+
+| 路径 | 入口 | 用户要做什么 | 服务实现 |
+| --- | --- | --- | --- |
+| **扫码**（面板里的「扫码绑定」标签页） | `POST /passport/api/v1/fanverify-otp` → `GET /passport/api/v1/fanverify-qr` → `POST /passport/api/v1/bindings {otp, password}` | 填当前密码，用 FanVerify 微信小程序扫码并确认 | `bindFanVerifyByOtp()`（**自动落库，不需要点「确认绑定」**） |
+| **手填**（面板里的「手填绑定」标签页） | `POST /passport/api/v1/bindings {uid, code, password}` | 在小程序里取动态验证码，连同 FanVerify 账号ID一起填 | `bindFanVerify()`（走 `FanVerifyVerifier::verify()`，即 `GET /openapi/user_verify`） |
+
+> 前端两条路径**共用同一个密码框**；「确认绑定」按钮只在手填标签页可见（扫码走自动绑定）。
+
+扫码绑定的完整流程（前端在 `passport/index.php` 的 `wireFanVerifyForm()` / `startFanVerifyPolling()` 里实现）：
+
+1. 用户在通行证中心点「FanVerify → 绑定 → 扫码绑定」，填写当前密码；
+2. 前端 `POST /passport/api/v1/fanverify-otp`，body 是 `{password}`；
+   服务端**先校验一次密码**（避免用户扫完码才发现密码错），再调 FanVerify 申请 OTP，
+   返回 `{otp, qr_url, expires_in, poll_interval}`；
+3. 前端把 `qr_url` 当成 `<img src>` 展示（`/passport/api/v1/fanverify-qr?otp=…`，**走服务端代理**，
+   令牌不进浏览器 URL，详见 7.5）；
+4. 用户用 FanVerify 微信小程序扫码并确认；
+5. 前端每 3 秒 `GET /passport/api/v1/fanverify-otp?otp=…` 轮询，直到 `status` 为 `ok`
+   （`wait` 继续等，`rate_limit` 跳过本轮继续等，超过 `expires_in` 视为二维码过期）；
+6. 前端 `POST /passport/api/v1/bindings {type:"fanverify", otp, password}` ——
+   **服务端会再轮询一次 OTP**（`BindingService::bindFanVerifyByOtp()`），
+   不轻信前端"已确认"的说法；OTP 未通过或已超时一律 422「扫码尚未确认或已超时，请重新扫码」。
+
+两条路径共同的三条规则：
+
+- **必须验当前密码**（`assertPassword()`），与邮箱绑定一致，理由见 5.1；
+- **等级门槛**：落库前检查 `FANVERIFY_REQUIRED_LEVEL`（默认 `0` = 不限）。要求大于 0 且
+  FanVerify 返回的等级低于门槛（或没返回等级）时，直接 422
+  「该 FanVerify 账号等级不足（当前 X，要求 N）」，`details.field = fanverify_uid`，**不写库**；
+- **风险标签**：`tag` 与 `level` 一起落库并对外展示（见 5.2），标签为空串即视为无标签。
+
+> 扫码流程里"这个人是谁"由 FanVerify 侧确认（用户在小程序里点了同意），我们只负责把结果落库，
+> 因此**不做交叉校验**；手填路径同样只校验 UID + 动态验证码 —— FanVerify 不返回"绑定的游戏名"，
+> 传进去的 `playerName` 仅用于日志（需要交叉校验游戏名的只有简幻通）。
+
+### 5.4 邮箱验证码的场景（scene）
 
 登录后补绑邮箱用的是 scene `bind`，与注册时的 `register` 分开计数、互不干扰。
 `EmailCodeService::normalizeScene()` 的白名单是 `register` / `bind` / `reset`，
@@ -346,9 +399,12 @@ HTTP 端点 `passport/api/v1/bindings.php`。必填绑定不在这里管理，�
 
 ---
 
-## 七、TODO 清单：五个待接入的外部接口
+## 七、TODO 清单：四个待接入的外部接口
 
-五个接口都遵循同一套设计：
+> **FanVerify 已从本清单移出**：它已真实接入 fanverify.cn openAPI（见 7.5），
+> 不再属于"待接入"。剩下的四个接口是：邮箱验证码、游戏内玩家、邦国信息、简幻通。
+
+这四个接口都遵循同一套设计：
 
 1. 契约在 `src/Contracts/`，HTTP 实现已经写好且**由 `.env` 配置驱动**，未配置时由 `Unavailable*` 接管；
 2. 对接时**通常不需要改代码，只要填 `.env`**；只有返回结构无法用点路径表达时才改一个 `map*()` / `build*()` 方法；
@@ -363,7 +419,7 @@ HTTP 端点 `passport/api/v1/bindings.php`。必填绑定不在这里管理，�
 | 简幻通（7.4） | 注册必填 | **注册直接失败**（501） |
 | 邦国信息（7.3） | 查询用 | 邦国查询 501；注册时的邦国预热失败**不影响注册** |
 | 邮箱验证码（7.1） | **可选绑定** | 只挡「绑定验证邮箱」这一步；用户不勾选即可正常注册 |
-| FanVerify（7.5） | **可选绑定** | 只挡「绑定 FanVerify」这一步；用户不勾选即可正常注册 |
+| ~~FanVerify（7.5）~~ | **可选绑定，已接入** | 代码已完整接入；只有**没配 `FANVERIFY_ACCESS_TOKEN`** 时才会 501，不影响注册与登录 |
 
 ### 7.1 邮箱验证码（可选绑定）
 
@@ -451,39 +507,96 @@ HTTP 端点 `passport/api/v1/bindings.php`。必填绑定不在这里管理，�
   直接 422 拒绝（`details.field = player_name`）。
 - **未接入时的表现**：注册流程的简幻通校验（必填校验的第二步）→ 501 `not_implemented`「简幻通验证接口尚未接入，请在 .env 中配置 SIMPASS_API_URL / SIMPPASS_ACCESS_TOKEN」。
 
-### 7.5 FanVerify（可选绑定）
+### 7.5 FanVerify（可选绑定）—— 已接入
 
-- **定位：可选绑定**（与 7.1 的邮箱验证码同级）。未接入**不影响注册与登录**——
-  用户不勾选「绑定 FanVerify 账号」就能正常注册；只有主动发起 FanVerify 绑定时才会看到 501。
+- **定位：可选绑定**（与 7.1 的邮箱验证码同级），**且已经真实接入**，不再是 TODO。
+  代码已完整覆盖 fanverify.cn openAPI 的全部 7 个接口；只有**没配 `FANVERIFY_ACCESS_TOKEN`** 时
+  才会退回 `UnavailableFanVerifyVerifier` 并 501 —— 且**不影响注册与登录**。
+- **接口根地址**：`https://api.fanverify.cn`（`FANVERIFY_API_BASE` 的默认值）。
+  官方文档 <https://doc.fanverify.cn/llms.txt> 的 OpenAPI 里 `servers` 是空的，这个地址是**实测**得出的：
+  `/openapi/*` 会返回文档中描述的 `401 {"error":"Unauthorized"}`，根路径返回 Go 风格的 `404 page not found`。
+  该域名走腾讯 EdgeOne CDN。
+- **鉴权统一用 `accesstoken`**：GET 类接口放 query string，POST 类接口放 JSON body。
+- **已覆盖的 7 个接口**（全部挂在 `/openapi/` 下，实现见 `src/Verification/FanVerifyClient.php`）：
+
+  | 路径 | 方法 | 用途 | 关键参数 |
+  | --- | --- | --- | --- |
+  | `/devinfo` | GET | 开发者令牌信息（可当连通性自检） | `accesstoken` |
+  | `/otp` | GET | 申请 OTP（扫码流程第一步） | `accesstoken` |
+  | `/genqrcode` | GET | OTP 二维码，返回 `image/png` | `accesstoken`、`otp` |
+  | `/seeotp` | GET | 轮询 OTP 是否通过（同一 OTP 5 秒内重复查询返回 429） | `accesstoken`、`otp` |
+  | `/user_verify` | GET | UID + 动态验证码验证（手填路径） | `accesstoken`、`uid`、`pass_code` |
+  | `/getuserdata` | POST | 获取已被本开发者验证过的用户数据（403 = 该用户没被本开发者验证过） | body: `accesstoken`、`uid` |
+  | `/tag` | POST | 打风险标签（扣额度、不可自助取消；代码注释写明"打一次标签需要有效认证超过 1000 次用户，并一次性扣除 1000 额度"，标签对所有开发者与用户可见。**本客户端只提供能力，绝不自动调用** —— 打不打由人决定） | body: `accesstoken`、`tuid`、`tag`、`message` |
+
+- **统一的用户信息结构**（`user_verify` / `seeotp` / `getuserdata` 都返回它）：
+
+  ```json
+  { "status": "ok", "data": [ { "uid": 100002, "level": "3", "reg_time": "2026-07-14T08:22:38+08:00", "tag": "" } ] }
+  ```
+
+  `level` 在接口里是**字符串**（代码转成 `int`）；`tag` 空串表示没有标签（归一成 `null`）。
+  `seeotp` 的非成功状态是 `{"status":"wait"}` 与 429 的 `{"status":"rate_limit"}`；
+  `otp` 返回 `{"success":true,"data":{"otp":"…"}}`；`devinfo` 返回
+  `{Date_of_Issue, bind_uid, mode, need_end_level, service_message, status}`；401 恒为 `{"error":"Unauthorized"}`。
 - **对应 `.env` 变量**（见 `.env.example` 与 `Support/Config.php` 默认值表）：
-  `FANVERIFY_API_URL`（本接口的开关，为空即视为未接入）、`FANVERIFY_API_TOKEN`（填了就以
-  `Authorization: Bearer` 带上）、`FANVERIFY_API_TIMEOUT`（默认 8）、`FANVERIFY_API_METHOD`
-  （`POST` 默认 / `GET`）、`FANVERIFY_API_SUCCESS_CODE`（默认 `200`；**留空表示只看 HTTP 状态**，
-  适配不返回业务码的接口）、`FANVERIFY_API_CODE_FIELD`（默认 `code`）、`FANVERIFY_API_MESSAGE_FIELD`
-  （默认 `msg`）、`FANVERIFY_API_UID_FIELD`（默认 `data.uid`）、`FANVERIFY_API_PLAYER_FIELD`
-  （可选，FanVerify 侧绑定的游戏玩家名，用于交叉校验）。
-- **需要实现的接口文件**：`src/Contracts/FanVerifyVerifier.php`（契约，方法 `verify()` /
-  `isConfigured()` / `sourceName()`）；HTTP 实现 `src/Verification/HttpFanVerifyVerifier.php`，
-  对接点是 `buildRequest()` / `mapIdentity()` / `authHeaders()` 三个方法；
-  未配置时绑定 `src/Verification/UnavailableFanVerifyVerifier.php`。
-  返回值是值对象 `src/Verification/FanVerifyIdentity.php`（`uid()` / `playerName()`）。
-- **对接时通常无需改代码**：默认调用形态是 POST + query string，参数为
-  `uid` / `verify_code` / `mc_username` / `ip`；响应里账号ID的默认候选路径是
-  `data.uid` / `data.id` / `uid` / `user_info.uid`，对不上时用 `FANVERIFY_API_*_FIELD` 指定。
-  新接口若是 JSON body 或需要签名头，重写 `buildRequest()` / `authHeaders()` 即可。
-- **交叉校验**：配置了 `FANVERIFY_API_PLAYER_FIELD` 且 FanVerify 返回的绑定玩家名与当前通行证的
-  游戏内玩家名大小写不敏感不一致时，直接 422 拒绝（`details.field = fanverify_uid`）。
-- **未接入时的表现**：
-  - 注册流程中**只有用户勾选并填写了 FanVerify** 时才会走到这一步 → 501；**不勾选则完全不受影响**。
-  - 绑定 FanVerify（`POST /passport/api/v1/bindings`，`type=fanverify`）→ 501 `not_implemented`
-    「FanVerify 验证接口尚未接入。请在 .env 中配置 FANVERIFY_API_URL / FANVERIFY_API_TOKEN」；
-    此时 `GET …/bindings` 里 `fanverify.available` 为 `false`。
+
+  | 变量 | 默认值 | 说明 |
+  | --- | --- | --- |
+  | `FANVERIFY_API_BASE` | `https://api.fanverify.cn` | 接口根地址 |
+  | `FANVERIFY_ACCESS_TOKEN` | 空 | **本接口的开关**：为空即视为未接入，退回 `UnavailableFanVerifyVerifier` |
+  | `FANVERIFY_API_TIMEOUT` | `10` | 出站超时（秒），代码里下限是 3 |
+  | `FANVERIFY_REQUIRED_LEVEL` | `0` | 本站额外要求的等级门槛，`0` = 不限（见 5.3） |
+  | `FANVERIFY_OTP_TTL` | `180` | 扫码流程 OTP 的有效期（秒），代码里下限是 30 |
+
+  > 旧的"配置驱动"通用变量（`FANVERIFY_API_` 前缀下的 URL、TOKEN、SUCCESS_CODE 与各 `*_FIELD`）
+  > **已全部删除**，`.env` 里留着也不再生效；现在只认上表这五个变量
+  > （`FANVERIFY_API_BASE` / `FANVERIFY_ACCESS_TOKEN` / `FANVERIFY_API_TIMEOUT` /
+  > `FANVERIFY_REQUIRED_LEVEL` / `FANVERIFY_OTP_TTL`）。
+- **相关文件**：
+  - `src/Verification/FanVerifyClient.php` —— 覆盖上面 7 个接口的完整客户端（URL 拼装、状态映射、错误翻译）；
+  - `src/Contracts/FanVerifyVerifier.php` —— 契约，除 `verify()` 外还声明了
+    `requestOtp()` / `qrCodePng($otp)` / `pollOtp($otp)`；
+  - `src/Verification/HttpFanVerifyVerifier.php` —— 实现，全部委托给客户端；
+    `verify()` 走 `user_verify`，另外暴露 `developerInfo()` / `requiredLevel()` 供自检使用；
+  - `src/Verification/FanVerifyIdentity.php` —— 值对象 `(uid, level, tag, regTime)`，
+    方法 `uid()` / `level()` / `tag()` / `hasTag()` / `regTime()`；
+  - `src/Verification/UnavailableFanVerifyVerifier.php` —— 令牌未配置时的 Null Object，**全部方法**抛 501；
+  - `src/Identity/BindingService.php` —— `bindFanVerify()`（手填）/ `bindFanVerifyByOtp()`（扫码）/
+    `bindFanVerifyWithIdentity()`（身份已拿到时直接落库，**目前没有任何端点调用它**，
+    是为"服务端别处已确认身份"的场景预留的入口），
+    落库 `fanverify_uid` / `fanverify_level` / `fanverify_tag` / `fanverify_verified_at`；
+  - `passport/api/v1/fanverify-otp.php`、`passport/api/v1/fanverify-qr.php` —— 扫码流程的两个端点（见 5.3）。
+- **为什么要代理二维码**：`/openapi/genqrcode` 要求把 `accesstoken` 放在 **query string** 上，
+  让浏览器直接请求会把令牌暴露在前端 URL、浏览器历史与 `Referer` 里。
+  因此二维码由服务端带令牌取回 PNG 再原样转发（`passport/api/v1/fanverify-qr.php`），
+  浏览器只看到我们自己的 `/passport/api/v1/fanverify-qr?otp=…`。
+- **接入自检**：`php bin/fanverify-check.php`（CLI，非 CLI 直接 404）。它会检查
+  cURL 扩展 → `.env` 配置 → `GET /openapi/devinfo` 连通性 → 令牌信息（签发时间 / 绑定 UID / 模式 /
+  要求等级 / 服务公告）→ `GET /openapi/otp` 能否申请 OTP，并给出门槛与 FanVerify 要求等级不一致时的提醒。
+  脚本**只打印令牌的前 8 位与后 4 位**，不会输出完整令牌。
+- **当前状态（务必如实理解）**：代码已完整接入，但当前配置的令牌调用 `devinfo` 返回 **401**
+  （不带令牌、带伪造令牌也是同一个 401；已排除字符歧义，也确认过 5 个端点的路径与参数名都能连通，
+  返回 401 而非 404）。所以问题在**令牌侧**，可能的排查方向：
+  1. 令牌是否已在 FanVerify 开发者后台**启用**；
+  2. 令牌是否已**过期或被重置**；
+  3. FanVerify 侧是否配置了**来源 IP 白名单**，需要把本服务器出口 IP 加进去。
+  排查入口就是 `php bin/fanverify-check.php`，它会打印 `curl -i` 的自查命令。
+  401 在我们的端点里会被翻译成 **500 `server_error`** 并附带上述排查提示（见 `FanVerifyClient::httpError()`）。
+- **未配置时的表现**（只有"没填 `FANVERIFY_ACCESS_TOKEN`"这一种情况）：
+  - 注册流程中**只有用户勾选并填写了 FanVerify** 时才会走到这一步 → 501；**不勾选则完全不受影响**；
+  - 绑定 FanVerify（`POST /passport/api/v1/bindings`，`type=fanverify`）→ 501 `not_implemented`；
+    扫码流程的两个端点同样是 501；此时 `GET …/bindings` 里 `fanverify.available` 为 `false`。
 
 > 管理员可在 `/passport/` 页面的「接口接入状态」卡片里一眼看到**五个接口**哪些已接入、哪些待接入
 > （判定依据分别是 `playerProvider()->isConfigured()` / `simpassVerifier()->isConfigured()` /
 > `emailVerifier()->isConfigured()` / `fanVerifyVerifier()->isConfigured()` /
-> `countryProvider()->isConfigured()`；卡片上会把游戏内玩家与简幻通标为「必填」，
-> 邮箱验证码、FanVerify、邦国信息标为「可选」）。
+> `countryProvider()->isConfigured()`）。
+> ⚠ 卡片上的标注与代码的**实际行为**：只有"非必填"的三项（邮箱验证码、FanVerify、邦国信息）会被加上
+> 「可选」角标，游戏内玩家与简幻通不加角标（**卡片并不会渲染「必填」二字**）。
+> FanVerify 的接入状态取 `fanVerifyVerifier()->isConfigured()`，即 `FANVERIFY_ACCESS_TOKEN` 是否已配置；
+> 卡片在"待接入"时显示的那行"配置 xxx"提示变量名**仍是已废弃的旧名**（`passport/index.php` 里的一处遗留，
+> 没跟着本轮改动同步），**实际生效的开关是 `FANVERIFY_ACCESS_TOKEN`**，以本文件与 `.env.example` 为准。
 
 ---
 
@@ -494,9 +607,11 @@ HTTP 端点 `passport/api/v1/bindings.php`。必填绑定不在这里管理，�
 ```bash
 cp .env.example .env
 # 必填：DB_HOST / DB_PORT / DB_NAME=bgjq8w / DB_USER=bgjq8w / DB_PASS
-# 按需填：PASSPORT_BASE_URL，以及五个外部接口的地址与令牌
+# 按需填：PASSPORT_BASE_URL，以及四个待接入接口的地址与令牌
 #   PLAYER_API_BASE / COUNTRY_API_BASE / SIMPASS_API_URL  —— 关系到注册必填校验
-#   EMAIL_API_URL / FANVERIFY_API_URL                     —— 可选绑定，不填不影响注册
+#   EMAIL_API_URL                                         —— 可选绑定，不填不影响注册
+# FanVerify 已接入：填 FANVERIFY_ACCESS_TOKEN 即可启用（不填则只挡"绑定 FanVerify"这一步）
+#   自检：php bin/fanverify-check.php
 ```
 
 `.env` 已被 `.gitignore` 排除（`.env`、`.env.*`，仅保留 `!.env.example`）。`.env.example` 里只允许出现占位值。
@@ -533,7 +648,8 @@ pwsh ./bin/init-database.ps1 -RootUser root -MysqlHost localhost -MysqlExe "C:\m
 
 **已经导入过上一版结构、库里已有数据的场景**：不要重跑 init 脚本（它会重建库与账号），
 改跑增量升级脚本 `database/upgrade-email-optional-fanverify.sql`
-（把 `email` 改为允许 `NULL`、补 `fanverify_uid` / `fanverify_verified_at` 两列与 `uk_fanverify_uid` 索引）。
+（把 `email` 改为允许 `NULL`、补 `fanverify_uid` / `fanverify_level` / `fanverify_tag` / `fanverify_verified_at`
+四列与 `uk_fanverify_uid` 索引）。
 用法与自检输出见 [`docs/MIGRATION.md` 第 2.4 节](../docs/MIGRATION.md)。
 
 ### 8.3 跑起来
@@ -571,11 +687,23 @@ pwsh ./bin/test.ps1
 ```
 
 该脚本先对全量 `.php` 文件跑 `php -l`（跳过 `vendor` / `node_modules` / `storage`），
-再运行 `passport/tests/smoke.php`，覆盖十一个部分：`Arr` 点路径取值、`Scope` 授权范围、
+再运行 `passport/tests/smoke.php`，覆盖十三个部分：`Arr` 点路径取值、`Scope` 授权范围、
 `Account` 可选绑定语义、未接入的可选绑定（只挡绑定不挡注册）、`Str` 随机与哈希、`Config` 配置读取、
 `Directory` 权威数据值对象、`Http` 响应与异常格式、未接入接口的失败语义（关键：绝不静默放行）、
-`database/8w_passport.sql` 结构自检、`Application` 依赖装配（最容易「忘了启动」的地方）。
+`database/8w_passport.sql` 结构自检、`Application` 依赖装配（最容易「忘了启动」的地方）、
+`BindingService` 绑定规则、`FanVerifyClient`（对接 fanverify.cn openAPI —— 用假 `HttpClient`
+在**无网络、无 cURL** 的环境下验证 URL 构造与响应映射，包括 401 → 500、403 → `null`、
+OTP 的 `wait` / `ok` / `rate_limit` 三种状态、二维码必须是 PNG 等）。
 两项全绿才允许提交。
+
+> `HttpClient` 刻意**不加 `final`**，就是为了让测试子类覆写 `get()` / `postJson()` 返回预设响应
+> （见 `passport/tests/smoke.php` 里的 `FakeHttpClient`）。
+
+另有一个只读的接入自检脚本（需要网络与 cURL，**不参与** `bin/test.ps1` 闸门）：
+
+```bash
+php bin/fanverify-check.php
+```
 
 ### 8.5 日常维护任务
 
@@ -617,4 +745,13 @@ php bin/maintenance.php --log-days=60
   `access_token` / `refresh_token` / `code` / `email_code` / `simpass_code`（见 `Support/Logger.php` 的
   `$redactKeys`）。**新增带密钥语义的字段名时必须同步加进这个名单**——例如 FanVerify 的
   `fanverify_code` 目前不在名单里，好在现有代码从不把它写进日志上下文。
+- **FanVerify 令牌绝不进前端**：`/openapi/genqrcode` 要求把 `accesstoken` 放 query string，
+  因此二维码一律走服务端代理（`passport/api/v1/fanverify-qr.php`），
+  不让浏览器直接请求上游 —— 否则令牌会留在前端 URL、浏览器历史与 `Referer` 里。
+  该端点还要求通行证登录态，且对 `otp` 做了长度与字符白名单校验（`^[A-Za-z0-9_-]+$`、≤64），
+  避免被当成公开的二维码代取服务或把任意内容拼进上游请求。
+- **OTP 与二维码都不缓存**：`fanverify-otp` / `fanverify-qr` 的响应都带 `Cache-Control: no-store`
+  （二维码另外带 `Pragma: no-cache`），OTP 也不落库 —— 它只在申请到落库之间的这几十秒里存在。
+  注意 `Logger` 的打码名单是按**完整键名**匹配的，`accesstoken` / `otp` 这类名字**不在名单里**，
+  往日志里写它们必须自己先掩码（`bin/fanverify-check.php` 就只打印令牌的前 8 位与后 4 位）。
 - 数据库：`Support\Database` 禁用模拟预处理（`PDO::ATTR_EMULATE_PREPARES => false`）。

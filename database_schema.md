@@ -43,6 +43,8 @@
 | `email_verified_at` | 邮箱验证通过时间，NULL 表示未绑定或未验证 |
 | `simpass_uid` / `simpass_level` / `simpass_verified_at` | 简幻通身份（注册必填） |
 | `fanverify_uid` | FanVerify 账号ID，**可选绑定，NULL = 未绑定** |
+| `fanverify_level` | FanVerify 等级（权威缓存；接口里是字符串，代码转成 `int`，NULL = 未绑定或未返回） |
+| `fanverify_tag` | FanVerify 风险标签（权威缓存，`VARCHAR(64)`；空串表示无标签，代码与落库都归一成 `NULL`） |
 | `fanverify_verified_at` | FanVerify 验证通过时间 |
 | `player_name` | **游戏内玩家名（权威主键，注册必填）** |
 | `player_id` | 玩家ID（权威缓存） |
