@@ -902,6 +902,36 @@ checkThrows('未配置令牌时 verifyUser 报错', function () use ($bareClient
 
 // ----------------------------------------------------------------------------
 
+section('Support\\HttpClient —— URL 里的密钥必须打码');
+
+checkSame(
+    'accesstoken 被抹掉',
+    'https://api.example.com/openapi/devinfo?accesstoken=***',
+    HttpClient::sanitizeUrl('https://api.example.com/openapi/devinfo?accesstoken=dev_REALTOKEN123')
+);
+check(
+    '多个敏感参数都被抹掉，非敏感参数保留',
+    strpos(HttpClient::sanitizeUrl('https://a.com/x?uid=1001&pass_code=654321&otp=ABC'), 'uid=1001') !== false
+        && strpos(HttpClient::sanitizeUrl('https://a.com/x?uid=1001&pass_code=654321&otp=ABC'), '654321') === false
+        && strpos(HttpClient::sanitizeUrl('https://a.com/x?uid=1001&pass_code=654321&otp=ABC'), 'ABC') === false
+);
+checkSame(
+    '没有查询串时原样返回',
+    'https://api.example.com/openapi/devinfo',
+    HttpClient::sanitizeUrl('https://api.example.com/openapi/devinfo')
+);
+checkSame(
+    '不含敏感参数时原样返回',
+    'https://a.com/x?uid=1001',
+    HttpClient::sanitizeUrl('https://a.com/x?uid=1001')
+);
+check(
+    '大小写不敏感',
+    strpos(HttpClient::sanitizeUrl('https://a.com/x?AccessToken=secret'), 'secret') === false
+);
+
+// ----------------------------------------------------------------------------
+
 echo "\n";
 $passed = $GLOBALS['w8_passed'];
 $failed = $GLOBALS['w8_failed'];

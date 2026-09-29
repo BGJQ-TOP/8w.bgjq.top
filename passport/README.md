@@ -741,10 +741,15 @@ php bin/maintenance.php --log-days=60
 - 授权端点：`client_id` / `redirect_uri` 校验失败时**绝不重定向**（防开放重定向），只渲染错误页；
   回调地址必须精确命中登记的白名单。
 - 授权码：一次性消费（`UPDATE … WHERE consumed_at IS NULL`），已消费的码被再次使用时会连带吊销该码签发的令牌。
-- 日志：`Logger` 按**键名**打码，当前名单是 `password` / `password_hash` / `client_secret` / `token` /
-  `access_token` / `refresh_token` / `code` / `email_code` / `simpass_code`（见 `Support/Logger.php` 的
-  `$redactKeys`）。**新增带密钥语义的字段名时必须同步加进这个名单**——例如 FanVerify 的
-  `fanverify_code` 目前不在名单里，好在现有代码从不把它写进日志上下文。
+- 日志：`Logger` 按**键名**打码，名单见 `Support/Logger.php` 的 `$redactKeys`
+  （`password` / `password_hash` / `client_secret` / `token` / `access_token` / `refresh_token` /
+  `accesstoken` / `code` / `pass_code` / `verify_code` / `email_code` / `simpass_code` /
+  `fanverify_code` / `otp` / `api_key` / `api_secret` …）。
+  **新增带密钥语义的字段名时必须同步加进这个名单。**
+- **URL 里的密钥也要打码**：很多第三方接口把令牌放在 query string 上（FanVerify 的 `accesstoken`），
+  而 `HttpClient` 会把 URL 写进调试日志 —— 因此它统一走 `HttpClient::sanitizeUrl()`，
+  把 `accesstoken` / `token` / `pass_code` / `otp` 等参数的值替换成 `***`，其余部分逐字节保留。
+  注意打码名单是按**完整键名**匹配的，取名字时别绕开它（例如叫 `key` 而不是 `api_key` 就会漏掉）。
 - **FanVerify 令牌绝不进前端**：`/openapi/genqrcode` 要求把 `accesstoken` 放 query string，
   因此二维码一律走服务端代理（`passport/api/v1/fanverify-qr.php`），
   不让浏览器直接请求上游 —— 否则令牌会留在前端 URL、浏览器历史与 `Referer` 里。

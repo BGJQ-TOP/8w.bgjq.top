@@ -108,15 +108,49 @@ class HttpClient
 
         if ($errno !== 0) {
             $this->logger->warning('http.transport_error', array(
-                'url' => $url, 'errno' => $errno, 'error' => $error, 'elapsed_ms' => $elapsed,
+                'url' => self::sanitizeUrl($url), 'errno' => $errno, 'error' => $error, 'elapsed_ms' => $elapsed,
             ));
             return HttpResponse::failure('外部接口连接失败：' . $error, $errno);
         }
 
         $this->logger->debug('http.response', array(
-            'url' => $url, 'method' => $method, 'status' => $status, 'elapsed_ms' => $elapsed,
+            'url' => self::sanitizeUrl($url), 'method' => $method, 'status' => $status, 'elapsed_ms' => $elapsed,
         ));
 
         return new HttpResponse($status, is_string($raw) ? $raw : '', null);
+    }
+
+    /**
+     * 抹掉 URL 查询串里的敏感参数
+     *
+     * 很多第三方接口要求把令牌直接放在 query string 上（FanVerify 的 accesstoken 就是），
+     * 而日志里记 URL 是常规操作 —— 不处理的话令牌会被写进 passport/storage/logs。
+     *
+     * 用正则只替换敏感参数的**值**，其余部分逐字节保留：
+     * 既不破坏 URL 原貌（便于排查），也不会像 http_build_query 那样把掩码本身编码掉。
+     *
+     * @param string $url
+     * @return string
+     */
+    public static function sanitizeUrl($url)
+    {
+        $sensitive = array(
+            'accesstoken', 'access_token', 'token', 'api_key', 'apikey', 'api_secret',
+            'pass_code', 'passcode', 'password', 'secret', 'code', 'otp', 'signature', 'sign',
+        );
+
+        $url = (string) $url;
+        $pos = strpos($url, '?');
+        if ($pos === false) {
+            return $url;
+        }
+
+        $base = substr($url, 0, $pos);
+        $query = substr($url, $pos + 1);
+
+        $pattern = '/(^|&)(' . implode('|', $sensitive) . ')=[^&]*/i';
+        $sanitized = preg_replace($pattern, '$1$2=***', $query);
+
+        return $base . '?' . ($sanitized === null ? $query : $sanitized);
     }
 }

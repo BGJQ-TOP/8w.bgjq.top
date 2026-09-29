@@ -21,8 +21,21 @@ final class Logger
     /** @var bool */
     private $debug;
 
-    /** @var array<int,string> */
-    private $redactKeys = array('password', 'password_hash', 'client_secret', 'token', 'access_token', 'refresh_token', 'code', 'email_code', 'simpass_code');
+    /**
+     * 需要打码的键名（按完整键名匹配）
+     *
+     * 新增带密钥语义的字段名时必须同步加进这个名单。
+     * 注意 URL 里的查询串不走这里，由 HttpClient::sanitizeUrl() 单独处理。
+     *
+     * @var array<int,string>
+     */
+    private $redactKeys = array(
+        'password', 'password_hash', 'client_secret', 'secret',
+        'token', 'access_token', 'refresh_token', 'accesstoken',
+        'code', 'pass_code', 'passcode', 'verify_code',
+        'email_code', 'simpass_code', 'fanverify_code',
+        'otp', 'api_key', 'apikey', 'api_secret',
+    );
 
     public function __construct($directory, $debug = false)
     {
