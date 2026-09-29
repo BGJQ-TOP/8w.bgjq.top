@@ -836,6 +836,34 @@ checkThrows('user_verify 返回非 ok 状态 -> 422', function () use ($fvClient
     $fvClient->verifyUser(100002, '000000');
 }, 'invalid_request');
 
+// ---- user_verify 的状态码语义（实测结论，与其它端点不同）----
+// uid 存在 + 验证码错误 -> 403；uid 不存在 -> 404；参数格式错 -> 400
+$fvHttp->on('/openapi/user_verify', 403, '{"error":"Forbidden"}');
+checkThrows('user_verify 403 -> 422（验证码不对，而不是"权限不足"）', function () use ($fvClient) {
+    $fvClient->verifyUser(100001, '000000');
+}, 'invalid_request');
+
+$fvHttp->on('/openapi/user_verify', 404, '{"error":"Not Found"}');
+checkThrows('user_verify 404 -> 422（账号不存在，而不是"接口路径配错"）', function () use ($fvClient) {
+    $fvClient->verifyUser(999999, '123456');
+}, 'invalid_request');
+
+$fvHttp->on('/openapi/user_verify', 400, '{"error":"Bad Request"}');
+checkThrows('user_verify 400 -> 422（参数格式错）', function () use ($fvClient) {
+    $fvClient->verifyUser(0, '');
+}, 'invalid_request');
+
+$fvHttp->on('/openapi/user_verify', 500, 'boom');
+checkThrows('user_verify 500 -> 500（真·服务端错误）', function () use ($fvClient) {
+    $fvClient->verifyUser(100001, '000000');
+}, 'server_error');
+
+// 恢复成功路由
+$fvHttp->on('/openapi/user_verify', 200, json_encode(array(
+    'status' => 'ok',
+    'data' => array(array('level' => '3', 'reg_time' => '', 'tag' => '', 'uid' => 100002)),
+)));
+
 // ---- 401 / 404 的语义必须能区分开 ----
 // 实测 FanVerify 先校验路径再鉴权：不存在的路径返回 404，所以 401 一定指向令牌问题
 $fvHttp->on('/openapi/devinfo', 401, '{"error":"Unauthorized"}');
@@ -866,7 +894,12 @@ checkSame('轮询 wait', 'wait', $polled['status']);
 checkSame('wait 时不返回身份', null, $polled['identity']);
 
 $fvHttp->on('/openapi/seeotp', 429, '{"status":"rate_limit"}');
-checkSame('轮询 rate_limit（429 不算错误）', 'rate_limit', $fvClient->pollOtp('OTP123')['status']);
+checkSame('轮询 rate_limit（429 兜底路径）', 'rate_limit', $fvClient->pollOtp('OTP123')['status']);
+
+// 实测：FanVerify 的限流其实是 HTTP 200 + {"status":"rate_limit"}，
+// 官方文档写的 429 与实际不符 —— 必须靠 status 字段识别
+$fvHttp->on('/openapi/seeotp', 200, '{"status":"rate_limit"}');
+checkSame('轮询 rate_limit（实测形态：200 + status 字段）', 'rate_limit', $fvClient->pollOtp('OTP123')['status']);
 
 $fvHttp->on('/openapi/seeotp', 200, json_encode(array(
     'status' => 'ok',
@@ -890,9 +923,27 @@ checkThrows('genqrcode 返回非 PNG -> 500', function () use ($fvClient) {
     $fvClient->qrCodePng('OTP123');
 }, 'server_error');
 
-// ---- getuserdata：403 表示"没被本开发者验证过" ----
+// ---- getuserdata：403 / 400 都表示"拿不到数据" ----
 $fvHttp->on('/openapi/getuserdata', 403, '{"code":403}');
 checkSame('getuserdata 403 -> null（未验证过）', null, $fvClient->userData(999999));
+
+$fvHttp->on('/openapi/getuserdata', 400, '{"code":400}');
+checkSame('getuserdata 400 -> null（实测当前恒返回 400）', null, $fvClient->userData(100109));
+
+$fvHttp->on('/openapi/getuserdata', 200, json_encode(array(
+    'status' => 'ok',
+    'data' => array(array('level' => '2', 'reg_time' => '', 'tag' => '', 'uid' => 100109)),
+)));
+checkSame('getuserdata 正常时返回身份', 100109, $fvClient->userData(100109)->uid());
+
+// ---- POST 类接口的令牌必须放 query，放 body 会 401（实测）----
+$fvHttp->on('/openapi/getuserdata', 200, json_encode(array(
+    'status' => 'ok',
+    'data' => array(array('level' => '1', 'reg_time' => '', 'tag' => '', 'uid' => 100109)),
+)));
+$fvClient->userData(100109);
+$postUrl = $fvHttp->urls[count($fvHttp->urls) - 1];
+check('POST 类接口把 accesstoken 放在 query string 上', strpos($postUrl, 'accesstoken=dev_TESTTOKEN') !== false, $postUrl);
 
 // ---- 未配置时所有方法都要明确报 not_implemented，不能静默成功 ----
 $bareClient = new FanVerifyClient(new Config(W8_PASSPORT_ROOT, array()), $fvHttp, $fvLogger);

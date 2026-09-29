@@ -746,7 +746,7 @@ FanVerify 的扫码绑定由两个端点配合完成，**令牌（`accesstoken`�
 | --- | --- | --- |
 | `POST …/fanverify-otp` | `GET /openapi/otp` | 返回 `{"success":true,"data":{"otp":"…"}}` |
 | `GET …/fanverify-qr` | `GET /openapi/genqrcode` | 返回 `image/png`；令牌只留在服务端 |
-| `GET …/fanverify-otp` | `GET /openapi/seeotp` | 返回 `{"status":"wait"}` 或 `{"status":"ok","data":[…]}`；同一 OTP **5 秒内重复查询返回 429 `{"status":"rate_limit"}`**，所以前端轮询间隔定在 3 秒，撞上限流就跳过本轮 |
+| `GET …/fanverify-otp` | `GET /openapi/seeotp` | 返回 `{"status":"wait"}` 或 `{"status":"ok","data":[…]}`；同一 OTP **5 秒内重复查询会返回 `{"status":"rate_limit"}`**（⚠ 官方文档说是 429，实测是 **HTTP 200 + status 字段**），所以前端轮询间隔定在 3 秒，撞上限流就跳过本轮 |
 | `POST /passport/api/v1/bindings`（`otp` 路径） | 再调一次 `GET /openapi/seeotp` | 落库前复核，不轻信前端"已确认" |
 | `POST /passport/api/v1/bindings`（`uid`+`code` 路径） | `GET /openapi/user_verify` | 参数 `uid` + `pass_code` |
 | `GET …/fanverify-status` | `GET /openapi/devinfo` | 管理员自检 |
@@ -815,7 +815,8 @@ GET /passport/api/v1/fanverify-otp?otp=0pO6gTXmtlzwOBNc
 
 失败情形：未登录 → 401；缺少 `otp` 参数 → 422 `invalid_request`「缺少参数 otp」；
 令牌未配置 → 501；上游 401（令牌问题）→ 500 `server_error`；上游 403 → 403 `forbidden`。
-（注意：上游对同一 OTP 的 429 限流**不会**变成 429 响应，而是被映射成 `status: "rate_limit"` 的 200。）
+（注意：上游对同一 OTP 的限流**不会**变成 429 响应，而是被映射成 `status: "rate_limit"` 的 200。
+实测上游限流本身就是 `HTTP 200 + {"status":"rate_limit"}`，官方文档写的 429 与事实不符。）
 
 #### ③ 取二维码 PNG
 
@@ -956,11 +957,22 @@ GET /passport/api/v1/fanverify-status
 > | `401 {"error":"Unauthorized"}` | **500 `server_error`**，文案带排查提示：检查令牌是否有效、是否已在 FanVerify 开发者后台启用、本服务器出口 IP 是否在令牌白名单内 |
 > | 404 | **500 `server_error`**「FanVerify 接口路径不存在（404）：<端点>。这通常意味着 `FANVERIFY_API_BASE` 配错了，或 FanVerify 改了接口路径」—— 与 401 刻意区分开：FanVerify **先校验路径再鉴权**，所以 401 说明路径是对的、问题在令牌侧，404 才是我们的路径问题 |
 > | 403 | 403 `forbidden`（带上游的 `message`，没有就用默认文案） |
-> | 429 | 429 `rate_limited`「FanVerify 请求过于频繁，请稍后重试」 |
+> | 429 | 429 `rate_limited`「FanVerify 请求过于频繁，请稍后重试」（⚠ 实测上游限流其实是 **200 + `{"status":"rate_limit"}`**，429 只是兜底路径） |
 > | 连不上 / 超时 / DNS 失败 / cURL 扩展缺失 | 500 `server_error`「FanVerify 服务暂时不可用（具体原因）」 |
 > | 200 但 JSON 无法解析、或 `data` 里没有有效 `uid` | 500 `server_error` |
-> | `user_verify` 的 `status` 不是 `ok`（UID 或动态验证码不对） | 422 `invalid_request`「FanVerify 验证失败：账号ID或动态验证码不正确」（`details.field = fanverify_code`） |
+> | `user_verify` 的 `status` 不是 `ok` | 422 `invalid_request`「FanVerify 验证失败：账号ID或动态验证码不正确」（`details.field = fanverify_code`） |
 > | `getuserdata` 的 403（该用户没被本开发者验证过） | 在客户端内部映射为 `null`，不抛错 |
+>
+> ⚠ **`user_verify` 的状态码语义与其它端点不同，且官方文档没写**（实测得出，见 `FanVerifyClient::userVerifyError()`）：
+>
+> | 上游响应 | 真实含义 | 我们翻成 |
+> | --- | --- | --- |
+> | `403 {"error":"Forbidden"}` | uid 有效但动态验证码不对（也可能是等级不够，两者同码） | 422「FanVerify 验证未通过。请确认动态验证码是最新的；若账号等级未达到 FanVerify 要求，也会被拒绝。」 |
+> | `404 {"error":"Not Found"}` | **uid 不存在** | 422「FanVerify 账号不存在，请检查账号ID是否填写正确」 |
+> | `400 {"error":"Bad Request"}` | 参数格式错（uid 非数字、验证码为空） | 422「FanVerify 拒绝了请求参数：账号ID需为数字，动态验证码不能为空」 |
+>
+> 这就是为什么 `user_verify` **不能**复用通用错误翻译：通用逻辑会把它的 404 说成
+> 「接口路径不存在，可能 `FANVERIFY_API_BASE` 配错了」——而实际含义是"这个 FanVerify 账号不存在"。
 >
 > 排错入口有两个：后台「接口接入状态」卡片上 FanVerify 那一行的「自检」按钮（`GET /passport/api/v1/fanverify-status`，见 10.5），
 > 以及服务器上的 `php bin/fanverify-check.php`（见 `passport/README.md` 7.5）。

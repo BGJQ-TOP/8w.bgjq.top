@@ -159,6 +159,9 @@ final class FanVerifyClient
     /**
      * GET /openapi/seeotp —— 轮询 OTP 是否通过
      *
+     * ⚠ 官方文档说"5 秒内重复查询返回 429"，但**实测是 HTTP 200 + `{"status":"rate_limit"}`**。
+     *   所以这里以 `status` 字段为准，HTTP 429 只作为兜底一并识别。
+     *
      * @param string $otp
      * @return array{status:string,identity:FanVerifyIdentity|null}
      *         status: ok / wait / rate_limit
@@ -172,7 +175,7 @@ final class FanVerifyClient
 
         $payload = $response->json();
 
-        // 429 rate_limit 与 200 wait/ok 都是"正常业务状态"，不算错误
+        // 限流：以 status 字段为准（实测 200），429 兜底
         if ($response->status() === 429) {
             return array('status' => self::OTP_RATE_LIMIT, 'identity' => null);
         }
@@ -220,7 +223,7 @@ final class FanVerifyClient
         $this->assertTransport($response, 'user_verify');
 
         if (!$response->ok()) {
-            throw $this->httpError($response, 'user_verify');
+            throw $this->userVerifyError($response);
         }
 
         $payload = $response->json();
@@ -241,6 +244,65 @@ final class FanVerifyClient
         return $this->mapIdentity($payload, 'user_verify');
     }
 
+    /**
+     * user_verify 的错误翻译
+     *
+     * ⚠ 这个端点的状态码语义**和别的端点不一样**，是实测出来的
+     *    （官方文档只写了 401，其余靠实测）：
+     *
+     *     uid 存在 + 动态验证码错误 -> 403 {"error":"Forbidden"}
+     *     uid 不存在 / uid=0        -> 404 {"error":"Not Found"}
+     *     pass_code 为空或非数字    -> 400 {"error":"Bad Request"}
+     *
+     * 所以这里**不能**复用通用的 httpError()：
+     * 通用逻辑会把 404 说成"接口路径不存在，可能根地址配错了"，
+     * 而实际上它表示"这个 FanVerify 账号不存在"。
+     *
+     * @return ApiException
+     */
+    private function userVerifyError($response)
+    {
+        $status = $response->status();
+        $payload = $response->json();
+        $payload = is_array($payload) ? $payload : array();
+        $error = Arr::toTextOrNull(Arr::get($payload, 'error'));
+
+        $this->logger->info('fanverify.user_verify_error', array('status' => $status, 'error' => $error));
+
+        if ($status === 401) {
+            return $this->httpError($response, 'user_verify');
+        }
+
+        if ($status === 403) {
+            // 实测：uid 有效但验证码不对。也可能是账号等级不够（见 devinfo 的 need_end_level）
+            return ApiException::validation(
+                'FanVerify 验证未通过。请确认动态验证码是最新的；'
+                . '若账号等级未达到 FanVerify 要求（本令牌有等级门槛），也会被拒绝。',
+                array('field' => 'fanverify_code')
+            );
+        }
+
+        if ($status === 404) {
+            return ApiException::validation(
+                'FanVerify 账号不存在，请检查账号ID是否填写正确',
+                array('field' => 'fanverify_uid')
+            );
+        }
+
+        if ($status === 400) {
+            return ApiException::validation(
+                'FanVerify 拒绝了请求参数：账号ID需为数字，动态验证码不能为空',
+                array('field' => 'fanverify_uid')
+            );
+        }
+
+        if ($status === 429) {
+            return ApiException::rateLimited('FanVerify 请求过于频繁，请稍后重试');
+        }
+
+        return ApiException::serverError('FanVerify 返回异常（HTTP ' . $status . '）');
+    }
+
     // ========================================================================
     //  用户数据 / 风险标签
     // ========================================================================
@@ -248,22 +310,34 @@ final class FanVerifyClient
     /**
      * POST /openapi/getuserdata —— 获取该开发者验证过的用户数据
      *
+     * ⚠ 官方文档把 `accesstoken` 写在 JSON body 里，但**实测放 body 会 401**，
+     *   必须放 query string（和 GET 类接口一样）。POST 类接口都按这个来。
+     *
+     * ⚠ 另外实测：这个端点在各种输入形态下都返回 `{"code":400}`（HTTP 400）——
+     *   包括 uid 存在、uid 不存在、token 在 query 或 body、表单或 JSON。
+     *   也就是说它当前**不可用**，所以这里把 400/403 都当成"拿不到数据"返回 null，
+     *   不让它影响调用方。等 FanVerify 侧修好再收紧。
+     *
      * @param int|string $uid
-     * @return FanVerifyIdentity|null 未被本开发者验证过时返回 null（403）
+     * @return FanVerifyIdentity|null 拿不到时返回 null
      */
     public function userData($uid)
     {
         $response = $this->http->postJson(
-            $this->baseUrl() . '/openapi/getuserdata',
-            array('accesstoken' => $this->accessToken(), 'uid' => (string) (int) $uid),
+            $this->url('getuserdata'),
+            array('uid' => (string) (int) $uid),
             array(),
             $this->timeout()
         );
 
         $this->assertTransport($response, 'getuserdata');
 
-        if ($response->status() === 403) {
-            // 文档里 403 的语义就是"没被本开发者验证过"
+        // 403：文档语义是"该用户没被本开发者验证过"
+        // 400：实测当前恒返回这个，无法区分原因
+        if ($response->status() === 403 || $response->status() === 400) {
+            $this->logger->info('fanverify.user_data_unavailable', array(
+                'uid' => (int) $uid, 'status' => $response->status(),
+            ));
             return null;
         }
 
@@ -272,7 +346,7 @@ final class FanVerifyClient
         }
 
         $payload = $response->json();
-        if ($payload === null || Arr::get($payload, 'status') !== self::STATUS_OK) {
+        if (!is_array($payload) || Arr::get($payload, 'status') !== self::STATUS_OK) {
             return null;
         }
 
@@ -284,7 +358,10 @@ final class FanVerifyClient
      *
      * ⚠ 打一次标签需要有效认证超过 1000 次用户，并一次性扣除 1000 额度；
      *   标签对所有开发者与用户可见，且一旦打下无法自助取消。
-     *   本客户端只提供能力，绝不自动调用 —— 是否打标签必须由人决定。
+     *   本客户端只提供能力，**绝不自动调用** —— 是否打标签必须由人决定。
+     *
+     * ⚠ 与 getuserdata 同样：`accesstoken` 放 query string，不放 body。
+     *   该方法**未经实测**（会扣额度，不能拿生产令牌做实验）。
      *
      * @param int|string $uid
      * @param string $tag
@@ -294,12 +371,11 @@ final class FanVerifyClient
     public function applyTag($uid, $tag, $message)
     {
         $response = $this->http->postJson(
-            $this->baseUrl() . '/openapi/tag',
+            $this->url('tag'),
             array(
-                'accesstoken' => $this->accessToken(),
-                'tuid'        => (string) (int) $uid,
-                'tag'         => (string) $tag,
-                'message'     => (string) $message,
+                'tuid'    => (string) (int) $uid,
+                'tag'     => (string) $tag,
+                'message' => (string) $message,
             ),
             array(),
             $this->timeout()

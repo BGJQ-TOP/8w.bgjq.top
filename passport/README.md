@@ -524,7 +524,7 @@ FanVerify（fanverify.cn）是**可选绑定**，已真实接入它的 openAPI�
   | `/devinfo` | GET | 开发者令牌信息（可当连通性自检） | `accesstoken` |
   | `/otp` | GET | 申请 OTP（扫码流程第一步） | `accesstoken` |
   | `/genqrcode` | GET | OTP 二维码，返回 `image/png` | `accesstoken`、`otp` |
-  | `/seeotp` | GET | 轮询 OTP 是否通过（同一 OTP 5 秒内重复查询返回 429） | `accesstoken`、`otp` |
+  | `/seeotp` | GET | 轮询 OTP 是否通过（同一 OTP 5 秒内重复查询返回 `rate_limit`） | `accesstoken`、`otp` |
   | `/user_verify` | GET | UID + 动态验证码验证（手填路径） | `accesstoken`、`uid`、`pass_code` |
   | `/getuserdata` | POST | 获取已被本开发者验证过的用户数据（403 = 该用户没被本开发者验证过） | body: `accesstoken`、`uid` |
   | `/tag` | POST | 打风险标签（扣额度、不可自助取消；代码注释写明"打一次标签需要有效认证超过 1000 次用户，并一次性扣除 1000 额度"，标签对所有开发者与用户可见。**本客户端只提供能力，绝不自动调用** —— 打不打由人决定） | body: `accesstoken`、`tuid`、`tag`、`message` |
@@ -536,9 +536,32 @@ FanVerify（fanverify.cn）是**可选绑定**，已真实接入它的 openAPI�
   ```
 
   `level` 在接口里是**字符串**（代码转成 `int`）；`tag` 空串表示没有标签（归一成 `null`）。
-  `seeotp` 的非成功状态是 `{"status":"wait"}` 与 429 的 `{"status":"rate_limit"}`；
+  `seeotp` 的非成功状态是 `{"status":"wait"}` 与 `{"status":"rate_limit"}`；
   `otp` 返回 `{"success":true,"data":{"otp":"…"}}`；`devinfo` 返回
   `{Date_of_Issue, bind_uid, mode, need_end_level, service_message, status}`；401 恒为 `{"error":"Unauthorized"}`。
+
+- **实测结论（与官方文档不一致的地方，代码以实测为准）**：
+
+  | 事项 | 官方文档 | 实测 | 代码怎么处理 |
+  | --- | --- | --- | --- |
+  | 接口根地址 | `servers: []`（空） | `https://api.fanverify.cn` | 作为 `FANVERIFY_API_BASE` 默认值 |
+  | POST 类接口的 `accesstoken` | 放在 JSON body 里 | **放 body 会 401，必须放 query string** | `userData()` / `applyTag()` 都走 `url()`，令牌统一在 query |
+  | `seeotp` 限流 | 「5 秒内重复查询返回 429」 | **HTTP 200 + `{"status":"rate_limit"}`** | 以 `status` 字段为准，HTTP 429 只作兜底 |
+  | `user_verify` 验证码错误 | 未写 | **403 `{"error":"Forbidden"}`** | 翻成 422「动态验证码不正确」，**不**说成"权限不足" |
+  | `user_verify` 账号不存在 | 未写 | **404 `{"error":"Not Found"}`** | 翻成 422「账号不存在」，**不**说成"接口路径配错" |
+  | `user_verify` 参数格式错 | 未写 | **400 `{"error":"Bad Request"}`** | 翻成 422「账号ID需为数字、验证码不能为空」 |
+  | `getuserdata` | 403 = 未被本开发者验证过 | **任何输入都返回 `{"code":400}`**（uid 存在与否、令牌在 query 或 body、JSON 或表单都一样） | 当前**不可用**，所以 400/403 都当作"拿不到数据"返回 `null`，不影响调用方；等上游修好再收紧 |
+  | `tag` | 扣 1000 额度、不可自助取消 | **未实测**（不能拿生产令牌做实验） | 只提供能力，代码里绝不自动调用 |
+
+  这些是踩过坑才写下来的：`user_verify` 的 404 **不能**复用通用错误翻译，
+  否则用户填错账号ID会看到"接口路径不存在，可能根地址配错了"这种牛头不对马嘴的提示。
+  实现见 `FanVerifyClient::userVerifyError()`。
+
+  > 关键路径（扫码绑定、手填绑定）都已实测跑通：`otp` → `genqrcode`（真实 PNG）→ `seeotp`（`wait`）→
+  > 5 秒内重复轮询拿到 `rate_limit`。`getuserdata` 与 `tag` 不在绑定流程上，前者上游有问题、后者故意不测。
+- **令牌的等级门槛**：`devinfo` 返回的 `need_end_level` 是该令牌要求的最低 FanVerify 等级
+  （当前这个令牌是 `1`）。低于门槛的账号会拿到和"验证码错误"一样的 403，
+  所以 403 的提示文案同时覆盖了这两种可能。管理员的「接口状态 → 自检」能看到当前值。
 - **对应 `.env` 变量**（见 `.env.example` 与 `Support/Config.php` 默认值表）：
 
   | 变量 | 默认值 | 说明 |
