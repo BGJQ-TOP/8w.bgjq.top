@@ -261,6 +261,11 @@ final class BindingService
 
         $result = $this->fanVerify->pollOtp($otp);
 
+        if ($result['status'] === FanVerifyClient::OTP_RATE_LIMIT) {
+            // 别把限流说成"没确认" —— 用户会以为是自己没点确认
+            throw ApiException::rateLimited('FanVerify 查询过于频繁，请等几秒后重试');
+        }
+
         if ($result['status'] !== FanVerifyClient::STATUS_OK || $result['identity'] === null) {
             throw ApiException::validation(
                 '扫码尚未确认或已超时，请重新扫码',
