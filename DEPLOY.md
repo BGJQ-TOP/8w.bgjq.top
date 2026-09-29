@@ -108,11 +108,18 @@ FANVERIFY_OTP_TTL=180
 > 则关系到注册必填校验，未配置时注册会明确返回 501。
 > FanVerify **已完整接入**（7 个 openAPI 接口：`devinfo` / `otp` / `genqrcode` / `seeotp` /
 > `user_verify` / `getuserdata` / `tag`），"未配置"只意味着没填 `FANVERIFY_ACCESS_TOKEN`。
-> 配好后可以跑一次接入自检（会检查 cURL 扩展、配置、`/openapi/devinfo` 连通性、令牌信息与 OTP 可用性）：
+> 配好后可以跑一次接入自检（会检查 cURL 扩展、**本机出口 IP**、配置、
+> `/openapi/devinfo` 连通性、令牌信息与 OTP 可用性）：
 
 ```bash
 php bin/fanverify-check.php
 ```
+
+> ⚠ **FanVerify 的令牌做了来源 IP 白名单，且只允许绑定一个出口 IP。**
+> 服务器出口 IP 与白名单不一致时，**所有** FanVerify 接口都会返回
+> `401 {"error":"Unauthorized"}` —— 看起来像"令牌无效"，实际是 IP 没放行。
+> **换服务器、加负载均衡、走 CDN 出站都会触发这个问题**，部署后请先跑一次自检确认出口 IP。
+> 自检输出的「本机出口 IP」直接和 FanVerify 后台登记的地址比对即可。
 
 `php/config.php` 只负责社区站点自身的数据库连接，通过 `env()` 读取上述变量，
 不再硬编码任何凭据。

@@ -274,10 +274,15 @@ final class FanVerifyClient
         }
 
         if ($status === 403) {
-            // 实测：uid 有效但验证码不对。也可能是账号等级不够（见 devinfo 的 need_end_level）
+            // 实测：uid 有效但动态验证码不对。
+            //
+            // ⚠ 如果 FanVerify 后台给令牌设了 need_end_level > 0，
+            //   那么"账号等级不足"也会返回同样的 403，两者无法区分。
+            //   当前该令牌的 need_end_level 已设为 0，所以 403 就是验证码错误，
+            //   文案按单一原因写。**若日后调高 need_end_level，必须回来把文案改回去**
+            //   （管理员可在「接口状态 → 自检」里看到当前值）。
             return ApiException::validation(
-                'FanVerify 验证未通过。请确认动态验证码是最新的；'
-                . '若账号等级未达到 FanVerify 要求（本令牌有等级门槛），也会被拒绝。',
+                'FanVerify 动态验证码不正确，请在微信小程序里重新获取后重试',
                 array('field' => 'fanverify_code')
             );
         }

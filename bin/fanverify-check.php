@@ -42,6 +42,44 @@ function mask($token)
     return substr($token, 0, 8) . '…' . substr($token, -4) . sprintf('（长度 %d）', strlen($token));
 }
 
+/**
+ * 探测本机出口 IP
+ *
+ * FanVerify 的令牌白名单只允许绑一个 IP，出口 IP 对不上时所有接口都 401，
+ * 所以自检时先把出口 IP 打出来，方便和白名单里的值比对。
+ *
+ * @return string|null 探测失败时返回 null（不影响后续检查）
+ */
+function detectEgressIp()
+{
+    $services = array(
+        'https://api.ipify.org',
+        'https://ifconfig.me/ip',
+        'https://ipinfo.io/ip',
+    );
+
+    foreach ($services as $service) {
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $service);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 6);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 4);
+        $result = curl_exec($ch);
+        $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($status === 200 && is_string($result)) {
+            $ip = trim($result);
+            // ipinfo 会返回纯 IP；ifconfig.me 也是。做个保守校验避免把 HTML 当 IP
+            if (preg_match('/^[0-9a-fA-F:.]{3,45}$/', $ip) === 1) {
+                return $ip;
+            }
+        }
+    }
+
+    return null;
+}
+
 echo "\n=== FanVerify 接入自检 ===\n\n";
 
 // ⓪ 运行环境
@@ -55,6 +93,11 @@ if (function_exists('curl_init')) {
     echo "    安装方式（Ubuntu/Debian）：sudo apt install php-curl 然后重启 php-fpm\n\n";
     exit(1);
 }
+
+// FanVerify 对令牌做了来源 IP 白名单（只允许绑一个 IP），
+// 出口 IP 对不上时所有接口都返回 401 —— 所以这里先把出口 IP 打出来，方便和白名单比对。
+$egressIp = detectEgressIp();
+line('本机出口 IP', $egressIp === null ? '(探测失败，可忽略)' : $egressIp);
 
 // ① 配置
 echo "\n[1/4] 配置\n";
@@ -81,11 +124,14 @@ try {
     echo "  \033[32m✓ 调用成功\033[0m\n\n";
 } catch (ApiException $e) {
     echo "\n  \033[31m✗ 调用失败：{$e->getMessage()}\033[0m\n";
-    echo "\n  排查建议：\n";
-    echo "    · 确认令牌是否在 FanVerify 开发者后台处于启用状态\n";
-    echo "    · 确认令牌没有过期或被重置\n";
-    echo "    · 若 FanVerify 侧配置了来源 IP 白名单，把本服务器出口 IP 加进去\n";
-    echo "    · 用 curl 直接验证一下：\n";
+    echo "\n  排查建议（按可能性排序）：\n";
+    echo "    1. \033[33m来源 IP 白名单\033[0m —— FanVerify 的令牌只允许绑定一个出口 IP，\n";
+    echo "       这是最常见的原因。本机出口 IP：" . ($egressIp === null ? '(探测失败，请手工确认)' : $egressIp) . "\n";
+    echo "       请确认它和 FanVerify 开发者后台里登记的 IP 完全一致\n";
+    echo "       （换服务器、走负载均衡或 CDN 出站都会导致不一致）\n";
+    echo "    2. 令牌是否在 FanVerify 开发者后台处于启用状态\n";
+    echo "    3. 令牌是否已过期或被重置\n";
+    echo "    4. 用 curl 直接验证，排除应用层因素：\n";
     echo "        curl -i \"{$base}/openapi/devinfo?accesstoken=你的令牌\"\n\n";
     exit(1);
 }
